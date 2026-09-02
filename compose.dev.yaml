@@ -1,0 +1,20 @@
+# Development. Postgres and the API on localhost, apps run from Vite on the host
+# with its own proxy. No reverse proxy, so no local TLS to fight.
+#
+#   cp .env.example .env
+#   docker compose up -d db api
+#   pnpm dev
+
+services:
+  db:
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  api:
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      NODE_ENV: development
+
+  web:
+    profiles: ["proxy"]

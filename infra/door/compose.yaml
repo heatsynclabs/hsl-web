@@ -1,0 +1,27 @@
+# Runs on the lab host, on the LAN with the door controller. Nothing else.
+# This machine holds the controller password and opens no inbound port.
+name: hsl-door
+
+services:
+  door:
+    build:
+      context: ../..
+      dockerfile: services/door/Dockerfile
+    restart: unless-stopped
+    environment:
+      CONTROLLER_URL: ${CONTROLLER_URL:?set CONTROLLER_URL, for example http://192.168.1.177}
+      CONTROLLER_PASSWORD_FILE: /run/secrets/controller_password
+      API_URL: ${API_URL:?set API_URL, the public members API}
+      DOOR_TOKEN_FILE: /run/secrets/door_token
+    secrets:
+      - controller_password
+      - door_token
+    # Bound to loopback. The API is reached outbound; nothing reaches in.
+    ports:
+      - "127.0.0.1:8080:8080"
+
+secrets:
+  controller_password:
+    file: ./secrets/controller_password
+  door_token:
+    file: ./secrets/door_token

@@ -14,3 +14,4 @@ coverage/
 *.dump
 *.sql.gz
 backups/
+secrets/

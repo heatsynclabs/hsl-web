@@ -1,0 +1,35 @@
+{
+	email {$HSL_ACME_EMAIL}
+}
+
+(spa) {
+	root * {args[0]}
+	encode
+	try_files {path} /index.html
+	file_server
+}
+
+# The members app is the origin everything shares, so the session cookie is a
+# plain first-party cookie and there is no CORS anywhere in the system.
+{$HSL_SCHEME}://{$HSL_DOMAIN} {
+	handle /api/* {
+		reverse_proxy api:3000
+	}
+
+	# The lab website and the ESP8266 status LED read this URL. It cannot change.
+	handle /space_api.json {
+		reverse_proxy api:3000
+	}
+
+	handle_path /signup* {
+		import spa /srv/signup
+	}
+
+	handle_path /admin* {
+		import spa /srv/admin
+	}
+
+	handle {
+		import spa /srv/members
+	}
+}
