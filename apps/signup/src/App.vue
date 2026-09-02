@@ -1,6 +1,8 @@
 <template>
   <div class="join" data-ground="page">
-    <AppBar app-name="Join HeatSync Labs" />
+    <AppBar app-name="Join HeatSync Labs">
+      <ThemeToggle />
+    </AppBar>
     <div class="join__tape" />
 
     <main class="join__wrap">
@@ -21,7 +23,7 @@
 
 <script setup lang="ts">
 import { useSession } from '@hsl/api-client'
-import { AppBar } from '@hsl/ui'
+import { AppBar, ThemeToggle } from '@hsl/ui'
 import { RouterView } from 'vue-router'
 
 // main.ts resolves the session before the app mounts, so this is the settled

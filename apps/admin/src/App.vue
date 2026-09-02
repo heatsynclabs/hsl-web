@@ -6,6 +6,7 @@
       <button class="app__signout" type="button" @click="signOut">Sign out</button>
     </template>
     <span v-else>Not signed in</span>
+    <ThemeToggle />
   </AppBar>
 
   <nav v-if="links.length > 0" class="app__nav" aria-label="Admin screens">
@@ -21,7 +22,7 @@
 
 <script setup lang="ts">
 import { clearSession } from '@hsl/api-client'
-import { AppBar, Avatar } from '@hsl/ui'
+import { AppBar, Avatar, ThemeToggle } from '@hsl/ui'
 import { computed } from 'vue'
 import { RouterLink, RouterView } from 'vue-router'
 

@@ -97,6 +97,15 @@ describe('posting back', () => {
   })
 
   it('picks up the commands the API queued', async () => {
-    expect(await linkTo(stubApi([])).fetchCommands()).toEqual(['open-front'])
+    expect(await linkTo(stubApi([])).fetchCommands()).toEqual({
+      commands: ['open-front'],
+      syncRequested: false,
+    })
+  })
+
+  it('treats a missing sync flag as no sync, so an older API still works', async () => {
+    const { syncRequested } = await linkTo(stubApi([])).fetchCommands()
+
+    expect(syncRequested).toBe(false)
   })
 })

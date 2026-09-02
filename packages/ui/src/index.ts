@@ -13,8 +13,19 @@ export { default as Mark } from './components/Mark.vue'
 export { default as Note } from './components/Note.vue'
 export { default as Pill } from './components/Pill.vue'
 export { default as StatusTile } from './components/StatusTile.vue'
+export { default as ThemeToggle } from './components/ThemeToggle.vue'
 
 export type { DataColumn, DataRow } from './components/DataTable.vue'
 export type { KeyValuePill, KeyValueRow } from './components/KeyValue.vue'
 export type { PillState } from './components/Pill.vue'
 export { markNames, type MarkName } from './marks'
+export {
+  applyTheme,
+  DEFAULT_THEME,
+  isTheme,
+  otherTheme,
+  storedTheme,
+  THEME_STORAGE_KEY,
+  THEMES,
+  type Theme,
+} from './theme'

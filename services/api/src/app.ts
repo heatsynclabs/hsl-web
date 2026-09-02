@@ -6,6 +6,7 @@ import { sessionMiddleware } from './middleware/session.ts'
 import { auditRoutes } from './routes/audit.ts'
 import { cardRoutes } from './routes/cards.ts'
 import { certificationRoutes } from './routes/certifications.ts'
+import { doorAdminRoutes } from './routes/door-admin.ts'
 import { doorRoutes } from './routes/door.ts'
 import { meRoutes } from './routes/me.ts'
 import { memberRoutes } from './routes/members.ts'
@@ -36,6 +37,7 @@ export function createApp(deps: AppDeps) {
     .route('/', paymentRoutes(deps))
     .route('/', auditRoutes(deps))
     .route('/', doorRoutes(deps))
+    .route('/', doorAdminRoutes(deps))
     .route('/', spaceApiRoutes(deps))
 
   app.notFound((c) => {

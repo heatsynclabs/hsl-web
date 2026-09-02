@@ -39,7 +39,10 @@ const cardTableEnvelope = z.object({
   cards: z.array(z.unknown()),
 })
 
-const pendingCommands = z.object({ commands: z.array(doorCommand) })
+const pendingCommands = z.object({
+  commands: z.array(doorCommand),
+  syncRequested: z.boolean().optional(),
+})
 
 export interface CardTable {
   generatedAt: string
@@ -48,9 +51,15 @@ export interface CardTable {
   unreadableRows: number
 }
 
+/** What the API has waiting: commands to run, and whether to reconcile now. */
+export interface PendingWork {
+  commands: DoorCommand[]
+  syncRequested: boolean
+}
+
 export interface ApiLink {
   fetchCardTable(): Promise<CardTable>
-  fetchCommands(): Promise<DoorCommand[]>
+  fetchCommands(): Promise<PendingWork>
   postReport(report: { status: DoorStatus; events: DoorEventReport[] }): Promise<number>
 }
 
@@ -94,8 +103,9 @@ export function createApiLink(options: ApiLinkOptions): ApiLink {
       return { generatedAt: envelope.generatedAt, cards, unreadableRows }
     },
 
-    async fetchCommands(): Promise<DoorCommand[]> {
-      return pendingCommands.parse(await call(COMMANDS_PATH)).commands
+    async fetchCommands(): Promise<PendingWork> {
+      const pending = pendingCommands.parse(await call(COMMANDS_PATH))
+      return { commands: pending.commands, syncRequested: pending.syncRequested ?? false }
     },
 
     async postReport(report): Promise<number> {

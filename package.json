@@ -11,11 +11,11 @@
   "packageManager": "pnpm@10.10.0",
   "scripts": {
     "build": "pnpm -r build",
-    "test": "pnpm -r test",
+    "test": "pnpm --filter @hsl/schema build && pnpm -r test",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint && node tools/voice-check.mjs",
     "check": "pnpm lint && pnpm typecheck && pnpm test",
-    "dev": "docker compose up -d db && pnpm -r --parallel dev",
+    "dev": "pnpm --filter @hsl/schema build && docker compose up -d db api mail && pnpm -r --parallel dev",
     "db:generate": "pnpm --filter @hsl/schema db:generate",
     "db:migrate": "pnpm --filter @hsl/schema db:migrate"
   },

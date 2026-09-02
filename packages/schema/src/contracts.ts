@@ -298,3 +298,67 @@ export const spaceApiResponse = z.looseObject({
   open: z.boolean(),
   status: z.string(),
 })
+
+/**
+ * A card seen at a reader that no card row claims.
+ *
+ * This is the enrolment queue. An admin holds an unissued card to the reader,
+ * the controller refuses it and logs the tag, the door service puts the two
+ * halves back together, and the card appears here to be assigned to a member.
+ * It replaces reading the raw door log and doing the arithmetic by hand.
+ */
+export const unknownCard = z.object({
+  cardNumber: z.string(),
+  outcome: z.enum(['granted', 'denied', 'presented']),
+  /** How many times it has been held to a reader since it was last cleared. */
+  timesSeen: z.int().min(1),
+  firstSeen: z.iso.datetime(),
+  lastSeen: z.iso.datetime(),
+})
+export type UnknownCard = z.infer<typeof unknownCard>
+
+export const unknownCardsResponse = z.object({
+  cards: z.array(unknownCard),
+  /** True when the door service has not reported recently enough to trust this. */
+  stale: z.boolean(),
+})
+export type UnknownCardsResponse = z.infer<typeof unknownCardsResponse>
+
+/** One line of the door's own history, for the admin door screen. */
+export const doorEventEntry = z.object({
+  id: z.number(),
+  kind: z.string(),
+  at: z.iso.datetime(),
+  detail: z.record(z.string(), z.unknown()).nullable(),
+})
+export type DoorEventEntry = z.infer<typeof doorEventEntry>
+
+export const doorEventsResponse = z.object({
+  events: z.array(doorEventEntry),
+})
+export type DoorEventsResponse = z.infer<typeof doorEventsResponse>
+
+/** What the controller is believed to hold, slot by slot, for the admin screen. */
+export const cardTableEntry = z.object({
+  slot: z.int(),
+  cardNumber: z.string(),
+  memberId: z.string().nullable(),
+  memberName: z.string().nullable(),
+  active: z.boolean(),
+  /** False when the member no longer has card access, so it will be cleared. */
+  reconciled: z.boolean(),
+})
+export type CardTableEntry = z.infer<typeof cardTableEntry>
+
+export const cardTableViewResponse = z.object({
+  slots: z.array(cardTableEntry),
+  usedSlots: z.int(),
+  freeSlots: z.int(),
+  nextFreeSlot: z.int().nullable(),
+})
+export type CardTableViewResponse = z.infer<typeof cardTableViewResponse>
+
+export const syncResponse = z.object({
+  queuedAt: z.iso.datetime(),
+})
+export type SyncResponse = z.infer<typeof syncResponse>

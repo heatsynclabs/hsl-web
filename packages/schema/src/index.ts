@@ -38,6 +38,13 @@ export type NewDoorEventRow = typeof tables.doorEvents.$inferInsert
 
 export {
   auditEntry,
+  cardTableEntry,
+  cardTableViewResponse,
+  doorEventEntry,
+  doorEventsResponse,
+  syncResponse,
+  unknownCard,
+  unknownCardsResponse,
   auditQuery,
   auditResponse,
   cardRecord,
@@ -80,6 +87,13 @@ export type HeldCertification = z.infer<typeof contracts.heldCertification>
 export type PaymentRecord = z.infer<typeof contracts.paymentRecord>
 export type WaiverRecord = z.infer<typeof contracts.waiverRecord>
 export type MemberDirectoryEntry = z.infer<typeof contracts.memberDirectoryEntry>
+export type CardTableEntry = z.infer<typeof contracts.cardTableEntry>
+export type CardTableViewResponse = z.infer<typeof contracts.cardTableViewResponse>
+export type DoorEventEntry = z.infer<typeof contracts.doorEventEntry>
+export type DoorEventsResponse = z.infer<typeof contracts.doorEventsResponse>
+export type SyncResponse = z.infer<typeof contracts.syncResponse>
+export type UnknownCard = z.infer<typeof contracts.unknownCard>
+export type UnknownCardsResponse = z.infer<typeof contracts.unknownCardsResponse>
 export type AuditEntry = z.infer<typeof contracts.auditEntry>
 
 export type MeResponse = z.infer<typeof contracts.meResponse>
@@ -112,6 +126,9 @@ export {
   CARD_SLOT_COUNT,
   cardTableResponse,
   doorCommand,
+  CARD_PRESENTED,
+  cardPresentedDetail,
+  cardReadOutcome,
   doorEventReport,
   doorLogEntry,
   doorName,

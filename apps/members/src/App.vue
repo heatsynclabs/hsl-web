@@ -4,7 +4,12 @@
       <Avatar :initials="initials" />
       <span class="app__who">{{ member.name }}</span>
       <button class="app__signout" type="button" @click="leave">Sign out</button>
+      <ThemeToggle />
     </AppBar>
+
+    <!-- Signing in happens before there is an app bar to put it in, and the
+         sign in screen is the one a member reads in a dark building. -->
+    <div v-else class="app__loose-theme"><ThemeToggle /></div>
 
     <nav v-if="member" class="app__nav" aria-label="Members">
       <RouterLink class="app__tab" to="/">Profile</RouterLink>
@@ -30,7 +35,7 @@
 
 <script setup lang="ts">
 import { clearSession } from '@hsl/api-client'
-import { AppBar, Avatar } from '@hsl/ui'
+import { AppBar, Avatar, ThemeToggle } from '@hsl/ui'
 import { computed, onErrorCaptured, ref } from 'vue'
 import { RouterLink, RouterView, useRouter } from 'vue-router'
 
@@ -72,6 +77,12 @@ async function leave(): Promise<void> {
   min-height: 100vh;
   background: var(--g-bg);
   color: var(--g-ink);
+}
+
+.app__loose-theme {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--space-3) var(--space-5);
 }
 
 .app__who {

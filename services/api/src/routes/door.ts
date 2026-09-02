@@ -5,6 +5,7 @@ import type {
   DoorControlResponse,
   DoorStatus,
   DoorStatusResponse,
+  SyncResponse,
   ErrorResponse,
   SyncCard,
 } from '@hsl/schema'
@@ -26,7 +27,7 @@ import { recordAudit } from '../audit.ts'
 import type { Config } from '../config.ts'
 import type { AppDeps, AppEnv } from '../context.ts'
 import type { Database } from '../db.ts'
-import { requireCardAccess, requireMember, signedIn } from '../middleware/require.ts'
+import { requireAdmin, requireCardAccess, requireMember, signedIn } from '../middleware/require.ts'
 import { jsonBody } from '../middleware/validate.ts'
 
 /**
@@ -66,6 +67,13 @@ interface QueuedCommand {
  */
 interface DoorCommandQueueResponse {
   commands: DoorCommand[]
+  /**
+   * True when an admin asked for the card table to be pushed now rather than on
+   * the next timed pass. The legacy app called this cards#upload_all and an
+   * admin had to remember to run it after every change; here the timer does it
+   * anyway and this only shortens the wait.
+   */
+  syncRequested: boolean
 }
 
 export interface LatestDoorStatus {
@@ -159,9 +167,18 @@ async function recordReport(
   return report.events.length
 }
 
+/** An admin asking for the card table now. Audited, because it touches the door. */
+async function recordSyncRequest(deps: AppDeps, actorId: string): Promise<SyncResponse> {
+  await recordAudit(deps.db, { actorId, action: 'door.sync', targetId: null })
+  return { queuedAt: new Date().toISOString() }
+}
+
 export function doorRoutes(deps: AppDeps) {
   const routes = new Hono<AppEnv>()
   const queue: QueuedCommand[] = []
+  // Held in memory beside the queue, and drained the same way. Losing it on a
+  // restart costs nothing: the reconcile loop runs on a timer regardless.
+  let syncRequested = false
 
   return routes
     .post('/api/door/control', requireCardAccess, jsonBody(doorControlRequest), async (c) => {
@@ -185,9 +202,17 @@ export function doorRoutes(deps: AppDeps) {
     .post('/api/door/report', doorCredential(deps.config), jsonBody(doorReportRequest), async (c) =>
       c.json({ eventsRecorded: await recordReport(deps.db, c.req.valid('json')) }),
     )
+    .post('/api/door/sync', requireAdmin, async (c) => {
+      syncRequested = true
+      return c.json(await recordSyncRequest(deps, signedIn(c).id), 202)
+    })
     .get('/api/door/commands', doorCredential(deps.config), (c) => {
       const drained = queue.splice(0, queue.length)
-      const body: DoorCommandQueueResponse = { commands: drained.map((entry) => entry.command) }
+      const body: DoorCommandQueueResponse = {
+        commands: drained.map((entry) => entry.command),
+        syncRequested,
+      }
+      syncRequested = false
       return c.json(body)
     })
 }

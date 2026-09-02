@@ -139,13 +139,41 @@ describe('the reconcile loop', () => {
 
   it('posts the status and drains the event log once the API has taken it', async () => {
     const space = lab()
-    space.device.log.push({ key: 'G', value: '12345' })
+    // A login, which carries no tag and so passes through as it came off the
+    // device. The log is a 40 entry ring buffer the firmware dumps whole, so a
+    // pass that did not clear would report the same entries forever.
+    space.device.log.push({ key: 'S', value: '0' })
 
     await runPass(space.deps)
 
     expect(space.reports[0]).toMatchObject({ status: { frontLocked: true, rearLocked: true } })
     expect(kinds(space)).toContain('controller-log')
     expect(space.device.log).toEqual([])
+  })
+
+  it('reports a card held to the reader as one event carrying the whole tag', async () => {
+    const space = lab()
+    // How the firmware logs a refused read of tag 0x0000A1B2: the low half
+    // under D, the high half under d, divisor 32767.
+    space.device.log.push({ key: 'D', value: String(0xa1b2 % 32767) })
+    space.device.log.push({ key: 'd', value: String(Math.floor(0xa1b2 / 32767)) })
+
+    await runPass(space.deps)
+
+    const presented = space.reports[0]?.events.filter((event) => event.kind === 'card-presented')
+    expect(presented).toEqual([
+      expect.objectContaining({ detail: { cardNumber: '0000A1B2', outcome: 'denied' } }),
+    ])
+  })
+
+  it('does not also report the two halves raw, which no admin could read', async () => {
+    const space = lab()
+    space.device.log.push({ key: 'D', value: String(0xa1b2 % 32767) })
+    space.device.log.push({ key: 'd', value: String(Math.floor(0xa1b2 / 32767)) })
+
+    await runPass(space.deps)
+
+    expect(kinds(space)).not.toContain('controller-log')
   })
 
   it('runs the commands the API queued and refuses the rear unlock among them', async () => {

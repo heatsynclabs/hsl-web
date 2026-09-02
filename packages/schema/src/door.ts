@@ -99,6 +99,22 @@ export const cardTableResponse = z.object({
   cards: z.array(syncCard),
 })
 
+/**
+ * The kind on a door event that says a card was held to a reader, with the tag
+ * put back together from the two halves the controller logs it in. This is what
+ * the admin enrolment screen reads: hold an unissued card to the reader and it
+ * shows up as a row to assign.
+ */
+export const CARD_PRESENTED = 'card-presented'
+
+export const cardReadOutcome = z.enum(['granted', 'denied', 'presented'])
+export type CardReadOutcome = z.infer<typeof cardReadOutcome>
+
+export const cardPresentedDetail = z.object({
+  cardNumber,
+  outcome: cardReadOutcome,
+})
+
 export const doorEventReport = z.object({
   kind: z.string().min(1),
   at: z.iso.datetime(),
@@ -128,4 +144,10 @@ export interface DoorController {
   writeCard(slot: number, permissions: number, tag: string): Promise<void>
   clearCard(slot: number): Promise<void>
   readLog(): Promise<DoorLogEntry[]>
+  /**
+   * Empties the log. The controller's is a 40 entry ring buffer that it dumps
+   * whole, so a reader that does not clear reports the same entries on every
+   * pass forever. Read then clear, which is what the Rails app did.
+   */
+  clearLog(): Promise<void>
 }

@@ -1,7 +1,7 @@
 import { pathToFileURL } from 'node:url'
 
 import { serve } from '@hono/node-server'
-import { doorEventReport } from '@hsl/schema'
+import { CARD_PRESENTED, doorEventReport } from '@hsl/schema'
 import type { z } from 'zod'
 
 import { createArduinoController, createHttpTransport } from './adapters/openaccess-arduino/controller.ts'
@@ -14,10 +14,18 @@ import {
   reportableEvents,
   type ReconcilePlan,
 } from './domain/reconcile.ts'
+import { readCards } from './domain/reads.ts'
 import { isUsableSlot } from './domain/slots.ts'
 import { createApiLink, type ApiLink } from './link.ts'
 
 type DoorEventReport = z.infer<typeof doorEventReport>
+
+/**
+ * The six log letters that carry half a tag each. readCards turns them into
+ * card-presented events, so reporting them raw as well would say the same thing
+ * twice in a form nobody can read.
+ */
+const TAG_HALVES = new Set(['G', 'g', 'D', 'd', 'R', 'r'])
 
 export interface LoopDependencies {
   controller: DoorAdapter
@@ -69,9 +77,19 @@ export async function runReportPass(
   const status = await deps.controller.status()
   const entries = await deps.controller.readLog()
   const at = new Date().toISOString()
+
+  // A tag is logged as two entries and neither half is a card number on its
+  // own, so the halves are turned into one card-presented event and the raw
+  // pair is dropped. Everything else, a lock, a login, an alarm, passes through
+  // as it came off the device.
   const events = [
     ...extraEvents,
-    ...entries.map((entry) => doorEventReport.parse({ kind: 'controller-log', at, detail: entry })),
+    ...readCards(entries).map((read) =>
+      doorEventReport.parse({ kind: CARD_PRESENTED, at, detail: read }),
+    ),
+    ...entries
+      .filter((entry) => !TAG_HALVES.has(entry.key))
+      .map((entry) => doorEventReport.parse({ kind: 'controller-log', at, detail: entry })),
   ]
 
   await deps.link.postReport({ status, events })
@@ -79,19 +97,35 @@ export async function runReportPass(
 }
 
 /** Commands the API queued while this service was between passes. */
-export async function runQueuedCommands(deps: LoopDependencies): Promise<string[]> {
+export async function runQueuedCommands(
+  deps: LoopDependencies,
+): Promise<{ refusals: string[]; syncRequested: boolean }> {
   const refusals: string[] = []
-  for (const command of await deps.link.fetchCommands()) {
+  const pending = await deps.link.fetchCommands()
+
+  for (const command of pending.commands) {
     const refusal = await runDoorCommand(deps.controller, command)
     if (refusal !== null) refusals.push(`${command}: ${refusal}`)
   }
-  return refusals
+
+  return { refusals, syncRequested: pending.syncRequested }
 }
 
 export async function runPass(deps: LoopDependencies): Promise<void> {
+  // Commands are drained first so a sync an admin asked for during the last
+  // interval is honoured by this pass rather than the next one. The reconcile
+  // runs either way: it is idempotent, and a card table that heals itself on a
+  // timer is worth more than one that waits to be told.
+  const { syncRequested } = await runQueuedCommands(deps)
   const plan = await runReconcilePass(deps)
-  await runQueuedCommands(deps)
-  await runReportPass(deps, reportableEvents(plan, new Date().toISOString()))
+
+  const at = new Date().toISOString()
+  const events = [
+    ...reportableEvents(plan, at),
+    ...(syncRequested ? [doorEventReport.parse({ kind: 'card-table-synced', at })] : []),
+  ]
+
+  await runReportPass(deps, events)
   if (!planIsEmpty(plan)) {
     console.log(`door: wrote ${plan.writes.length} cards, cleared ${plan.clears.length}`)
   }

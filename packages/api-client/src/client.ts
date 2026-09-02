@@ -4,7 +4,11 @@ import {
   auditResponse,
   cardResponse,
   certificationsResponse,
+  cardTableViewResponse,
   doorControlResponse,
+  doorEventsResponse,
+  syncResponse,
+  unknownCardsResponse,
   doorStatusResponse,
   memberCertificationsResponse,
   memberResponse,
@@ -109,6 +113,23 @@ function auditPath(query: Partial<AuditQuery>): string {
   return search === '' ? '/api/audit' : `/api/audit?${search}`
 }
 
+type CallFn = <Schema extends z.ZodType>(spec: Call<Schema>) => Promise<z.infer<Schema>>
+
+/** The door screens an admin uses. Grouped so the client factory stays readable. */
+function doorMethods(call: CallFn) {
+  return {
+    /** The enrolment queue: cards held to a reader that no card row claims. */
+    unknownCards: () =>
+      call({ method: 'GET', path: '/api/door/unknown-cards', schema: unknownCardsResponse }),
+    /** What the controller should be holding, slot by slot. */
+    cardTable: () =>
+      call({ method: 'GET', path: '/api/door/card-table-view', schema: cardTableViewResponse }),
+    doorEvents: () => call({ method: 'GET', path: '/api/door/events', schema: doorEventsResponse }),
+    /** Ask for the card table to be pushed now rather than on the next pass. */
+    syncDoor: () => call({ method: 'POST', path: '/api/door/sync', schema: syncResponse, body: {} }),
+  }
+}
+
 export function createClient(options: ClientOptions) {
   const call = <Schema extends z.ZodType>(spec: Call<Schema>) => request(options, spec)
 
@@ -146,6 +167,7 @@ export function createClient(options: ClientOptions) {
       call({ method: 'POST', path: '/api/payments', schema: paymentResponse, body: payment }),
     auditLog: (query: Partial<AuditQuery> = {}) =>
       call({ method: 'GET', path: auditPath(query), schema: auditResponse }),
+    ...doorMethods(call),
     controlDoor: (command: DoorControlRequest) =>
       call({
         method: 'POST',
