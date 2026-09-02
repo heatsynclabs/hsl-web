@@ -1,4 +1,11 @@
 <template>
+  <!--
+    The source is one of the 29 mark files in this package, imported at build
+    time and indexed by a union type, so it can only ever be our own SVG. No
+    caller-supplied string reaches it. Inlining rather than using an img tag is
+    what lets a mark inherit its colour from currentColor.
+  -->
+  <!-- eslint-disable-next-line vue/no-v-html -->
   <span class="mark" aria-hidden="true" :style="{ height: `${height}px` }" v-html="source" />
 </template>
 

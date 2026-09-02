@@ -46,6 +46,82 @@ export async function heldCertificationsFor(
   return rows.map(heldCertificationView)
 }
 
+/** Either the member's certifications after the change, or how it was refused. */
+type CertificationOutcome =
+  | { certifications: MemberCertificationsResponse }
+  | { status: 404 | 409; reason: string }
+
+/** Records that a member has been trained on one tool. */
+async function grantCertification(
+  deps: AppDeps,
+  actorId: string,
+  memberId: string,
+  slug: string,
+): Promise<CertificationOutcome> {
+  const certification = await findCertification(deps.db, slug)
+  if (certification === null) {
+    return { status: 404, reason: `There is no certification called ${slug}.` }
+  }
+  if (!(await memberExists(deps.db, memberId))) {
+    return { status: 404, reason: 'That member does not exist.' }
+  }
+
+  const held = await heldCertificationsFor(deps.db, memberId)
+  if (held.some((entry) => entry.slug === slug)) {
+    return { status: 409, reason: `That member already holds ${slug}. Nothing was changed.` }
+  }
+
+  await deps.db.insert(userCertifications).values({
+    userId: memberId,
+    certificationId: certification.id,
+    grantedById: actorId,
+  })
+  await recordAudit(deps.db, {
+    actorId,
+    action: 'certification.grant',
+    targetId: memberId,
+    detail: { slug },
+  })
+
+  return { certifications: { certifications: await heldCertificationsFor(deps.db, memberId) } }
+}
+
+/** Takes a certification back. The grant stays in the audit log. */
+async function revokeCertification(
+  deps: AppDeps,
+  actorId: string,
+  memberId: string,
+  slug: string,
+): Promise<CertificationOutcome> {
+  const certification = await findCertification(deps.db, slug)
+  if (certification === null) {
+    return { status: 404, reason: `There is no certification called ${slug}.` }
+  }
+
+  const removed = await deps.db
+    .delete(userCertifications)
+    .where(
+      and(
+        eq(userCertifications.userId, memberId),
+        eq(userCertifications.certificationId, certification.id),
+      ),
+    )
+    .returning({ id: userCertifications.id })
+
+  if (removed.length === 0) {
+    return { status: 404, reason: `That member does not hold ${slug}. Nothing was changed.` }
+  }
+
+  await recordAudit(deps.db, {
+    actorId,
+    action: 'certification.revoke',
+    targetId: memberId,
+    detail: { slug },
+  })
+
+  return { certifications: { certifications: await heldCertificationsFor(deps.db, memberId) } }
+}
+
 export function certificationRoutes(deps: AppDeps) {
   const routes = new Hono<AppEnv>()
 
@@ -60,74 +136,31 @@ export function certificationRoutes(deps: AppDeps) {
       requireInstructor,
       jsonBody(grantCertificationRequest),
       async (c) => {
-        const memberId = c.req.param('id')
-        const { slug } = c.req.valid('json')
-
-        const certification = await findCertification(deps.db, slug)
-        if (certification === null) return notFound(c, `There is no certification called ${slug}.`)
-        if (!(await memberExists(deps.db, memberId))) {
-          return notFound(c, 'That member does not exist.')
-        }
-
-        const held = await heldCertificationsFor(deps.db, memberId)
-        if (held.some((entry) => entry.slug === slug)) {
-          const body: ErrorResponse = {
-            error: `That member already holds ${slug}. Nothing was changed.`,
-          }
-          return c.json(body, 409)
-        }
-
-        await deps.db.insert(userCertifications).values({
-          userId: memberId,
-          certificationId: certification.id,
-          grantedById: signedIn(c).id,
-        })
-        await recordAudit(deps.db, {
-          actorId: signedIn(c).id,
-          action: 'certification.grant',
-          targetId: memberId,
-          detail: { slug },
-        })
-
-        const body: MemberCertificationsResponse = {
-          certifications: await heldCertificationsFor(deps.db, memberId),
-        }
-        return c.json(body, 201)
+        const outcome = await grantCertification(
+          deps,
+          signedIn(c).id,
+          c.req.param('id'),
+          c.req.valid('json').slug,
+        )
+        if ('status' in outcome) return refuse(c, outcome.status, outcome.reason)
+        return c.json(outcome.certifications, 201)
       },
     )
     .delete('/api/members/:id/certifications/:slug', requireInstructor, async (c) => {
-      const memberId = c.req.param('id')
-      const slug = c.req.param('slug')
-
-      const certification = await findCertification(deps.db, slug)
-      if (certification === null) return notFound(c, `There is no certification called ${slug}.`)
-
-      const removed = await deps.db
-        .delete(userCertifications)
-        .where(
-          and(
-            eq(userCertifications.userId, memberId),
-            eq(userCertifications.certificationId, certification.id),
-          ),
-        )
-        .returning({ id: userCertifications.id })
-
-      if (removed.length === 0) {
-        return notFound(c, `That member does not hold ${slug}. Nothing was changed.`)
-      }
-
-      await recordAudit(deps.db, {
-        actorId: signedIn(c).id,
-        action: 'certification.revoke',
-        targetId: memberId,
-        detail: { slug },
-      })
-
-      const body: MemberCertificationsResponse = {
-        certifications: await heldCertificationsFor(deps.db, memberId),
-      }
-      return c.json(body)
+      const outcome = await revokeCertification(
+        deps,
+        signedIn(c).id,
+        c.req.param('id'),
+        c.req.param('slug'),
+      )
+      if ('status' in outcome) return refuse(c, outcome.status, outcome.reason)
+      return c.json(outcome.certifications)
     })
+}
+
+function refuse(c: Context<AppEnv>, status: 404 | 409, message: string) {
+  const body: ErrorResponse = { error: message }
+  return c.json(body, status)
 }
 
 async function findCertification(db: Database, slug: string) {
@@ -140,7 +173,3 @@ async function memberExists(db: Database, memberId: string): Promise<boolean> {
   return rows.length > 0
 }
 
-function notFound(c: Context<AppEnv>, message: string) {
-  const body: ErrorResponse = { error: message }
-  return c.json(body, 404)
-}

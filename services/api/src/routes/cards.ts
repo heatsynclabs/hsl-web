@@ -10,6 +10,7 @@ import {
 import { eq, sql } from 'drizzle-orm'
 import type { Context } from 'hono'
 import { Hono } from 'hono'
+import type { z } from 'zod'
 
 import { recordAudit } from '../audit.ts'
 import type { AppDeps, AppEnv } from '../context.ts'
@@ -49,77 +50,111 @@ export function lowestFreeSlot(taken: number[]): number | null {
   return null
 }
 
+/** Either the card to return, or the status and words to refuse with. */
+type CardOutcome = { card: CardResponse } | { status: 400 | 404 | 409; reason: string }
+
+/**
+ * Assigns a card to the lowest slot the reader can scan.
+ *
+ * The slot is an EEPROM address on the controller, so it is chosen once here and
+ * never changed afterwards. A duplicate card number is refused before a slot is
+ * taken, because two rows holding the same number would make the reconcile diff
+ * ambiguous about which slot the device should keep.
+ */
+async function assignCard(
+  deps: AppDeps,
+  actorId: string,
+  request: z.infer<typeof postCardRequest>,
+): Promise<CardOutcome> {
+  if (!(await memberExists(deps.db, request.userId))) {
+    return { status: 404, reason: 'That member does not exist. No card was assigned.' }
+  }
+
+  const duplicate = await deps.db
+    .select({ id: cards.id })
+    .from(cards)
+    .where(eq(cards.cardNumber, request.cardNumber))
+    .limit(1)
+  if (duplicate.length > 0) {
+    return {
+      status: 409,
+      reason: `Card ${request.cardNumber} is already in slot ${duplicate[0]?.id}.`,
+    }
+  }
+
+  const assigned = await assignLowestFreeSlot(deps.db, request)
+  if (assigned === null) {
+    return {
+      status: 409,
+      reason: `Every slot from 0 to ${LAST_USABLE_CARD_SLOT} holds a card. No card was assigned. Deactivate and remove a card that is out of service, then try again.`,
+    }
+  }
+
+  await recordAudit(deps.db, {
+    actorId,
+    action: 'card.assign',
+    targetId: request.userId,
+    // The card number opens a door, so the audit screen records the slot and
+    // leaves the number to the card list.
+    detail: { slot: assigned.id, permissions: assigned.permissions },
+  })
+
+  return { card: { card: cardView(assigned) } }
+}
+
+/** Relabels, deactivates or reassigns a card. Never moves it to another slot. */
+async function updateCard(
+  deps: AppDeps,
+  actorId: string,
+  rawSlot: string,
+  request: z.infer<typeof patchCardRequest>,
+): Promise<CardOutcome> {
+  const slot = storedCardSlot.safeParse(Number(rawSlot))
+  if (!slot.success) return { status: 404, reason: 'That is not a card slot.' }
+
+  if (Object.keys(request).length === 0) {
+    return {
+      status: 400,
+      reason: 'The request asked for no change, so the card was left as it was.',
+    }
+  }
+  if (request.userId !== undefined && !(await memberExists(deps.db, request.userId))) {
+    return { status: 404, reason: 'That member does not exist. The card was left as it was.' }
+  }
+
+  // The slot itself is not in the request schema, so no edit can renumber it.
+  const updated = await deps.db.update(cards).set(request).where(eq(cards.id, slot.data)).returning()
+  const card = updated[0]
+  if (card === undefined) return { status: 404, reason: `No card is in slot ${slot.data}.` }
+
+  await recordAudit(deps.db, {
+    actorId,
+    action: 'card.update',
+    targetId: card.userId,
+    detail: { slot: card.id, ...request },
+  })
+
+  return { card: { card: cardView(card) } }
+}
+
 export function cardRoutes(deps: AppDeps) {
   const routes = new Hono<AppEnv>()
 
   return routes
     .post('/api/cards', requireAdmin, jsonBody(postCardRequest), async (c) => {
-      const request = c.req.valid('json')
-
-      if (!(await memberExists(deps.db, request.userId))) {
-        return refuse(c, 404, 'That member does not exist. No card was assigned.')
-      }
-
-      const duplicate = await deps.db
-        .select({ id: cards.id })
-        .from(cards)
-        .where(eq(cards.cardNumber, request.cardNumber))
-        .limit(1)
-      if (duplicate.length > 0) {
-        return refuse(c, 409, `Card ${request.cardNumber} is already in slot ${duplicate[0]?.id}.`)
-      }
-
-      const assigned = await assignLowestFreeSlot(deps.db, request)
-      if (assigned === null) {
-        return refuse(
-          c,
-          409,
-          `Every slot from 0 to ${LAST_USABLE_CARD_SLOT} holds a card. No card was assigned. Deactivate and remove a card that is out of service, then try again.`,
-        )
-      }
-
-      await recordAudit(deps.db, {
-        actorId: signedIn(c).id,
-        action: 'card.assign',
-        targetId: request.userId,
-        // The card number opens a door, so the audit screen records the slot and
-        // leaves the number to the card list.
-        detail: { slot: assigned.id, permissions: assigned.permissions },
-      })
-
-      const body: CardResponse = { card: cardView(assigned) }
-      return c.json(body, 201)
+      const outcome = await assignCard(deps, signedIn(c).id, c.req.valid('json'))
+      if ('status' in outcome) return refuse(c, outcome.status, outcome.reason)
+      return c.json(outcome.card, 201)
     })
     .patch('/api/cards/:id', requireAdmin, jsonBody(patchCardRequest), async (c) => {
-      const slot = storedCardSlot.safeParse(Number(c.req.param('id')))
-      if (!slot.success) return refuse(c, 404, 'That is not a card slot.')
-
-      const request = c.req.valid('json')
-      if (Object.keys(request).length === 0) {
-        return refuse(c, 400, 'The request asked for no change, so the card was left as it was.')
-      }
-      if (request.userId !== undefined && !(await memberExists(deps.db, request.userId))) {
-        return refuse(c, 404, 'That member does not exist. The card was left as it was.')
-      }
-
-      // The slot itself is not in the request schema, so no edit can renumber it.
-      const updated = await deps.db
-        .update(cards)
-        .set(request)
-        .where(eq(cards.id, slot.data))
-        .returning()
-      const card = updated[0]
-      if (card === undefined) return refuse(c, 404, `No card is in slot ${slot.data}.`)
-
-      await recordAudit(deps.db, {
-        actorId: signedIn(c).id,
-        action: 'card.update',
-        targetId: card.userId,
-        detail: { slot: card.id, ...request },
-      })
-
-      const body: CardResponse = { card: cardView(card) }
-      return c.json(body)
+      const outcome = await updateCard(
+        deps,
+        signedIn(c).id,
+        c.req.param('id'),
+        c.req.valid('json'),
+      )
+      if ('status' in outcome) return refuse(c, outcome.status, outcome.reason)
+      return c.json(outcome.card)
     })
 }
 

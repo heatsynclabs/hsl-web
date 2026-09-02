@@ -18,6 +18,7 @@ import {
   user,
 } from '@hsl/schema'
 import { and, asc, desc, eq, lte } from 'drizzle-orm'
+import type { z } from 'zod'
 import type { Context, MiddlewareHandler } from 'hono'
 import { Hono } from 'hono'
 
@@ -93,54 +94,87 @@ export function isFresh(reportedAt: Date | null, staleSeconds: number, now: Date
   return now.getTime() - reportedAt.getTime() <= staleSeconds * 1000
 }
 
+/**
+ * Queues one command for the door service to pick up on its next pass.
+ *
+ * A command is refused rather than queued when the door service has not
+ * reported recently, because queueing into silence tells a member the door is
+ * about to open when nothing is listening. The building is still reachable with
+ * a card, so this is an inconvenience rather than a lockout, and the message
+ * says so.
+ */
+async function queueCommand(
+  deps: AppDeps,
+  queue: QueuedCommand[],
+  actorId: string,
+  command: DoorCommand,
+): Promise<{ status: 202; body: DoorControlResponse } | { status: 503; reason: string }> {
+  const latest = await latestDoorStatus(deps.db)
+  if (!isFresh(latest.reportedAt, deps.config.doorStatusStaleSeconds, new Date())) {
+    return {
+      status: 503,
+      reason:
+        'The door service has not reported recently, so the command was not queued. Physical cards still open the door. Check the door service on the lab host.',
+    }
+  }
+
+  const queued: QueuedCommand = { command, queuedAt: new Date().toISOString(), actorId }
+  queue.push(queued)
+
+  await recordAudit(deps.db, {
+    actorId,
+    action: 'door.control',
+    targetId: null,
+    detail: { command },
+  })
+
+  return { status: 202, body: { command, queuedAt: queued.queuedAt } }
+}
+
+/** The status a member sees, with whether it is old enough not to trust. */
+async function readStatus(deps: AppDeps): Promise<DoorStatusResponse> {
+  const latest = await latestDoorStatus(deps.db)
+
+  return {
+    status: latest.status,
+    reportedAt: latest.reportedAt?.toISOString() ?? null,
+    stale: !isFresh(latest.reportedAt, deps.config.doorStatusStaleSeconds, new Date()),
+  }
+}
+
+/** Records one status snapshot and whatever events came with it, in one write. */
+async function recordReport(
+  db: Database,
+  report: z.infer<typeof doorReportRequest>,
+): Promise<number> {
+  await db.insert(doorEvents).values([
+    { kind: STATUS_EVENT_KIND, at: new Date(report.reportedAt), detail: report.status },
+    ...report.events.map((event) => ({
+      kind: event.kind,
+      at: new Date(event.at),
+      detail: event.detail ?? null,
+    })),
+  ])
+
+  return report.events.length
+}
+
 export function doorRoutes(deps: AppDeps) {
   const routes = new Hono<AppEnv>()
   const queue: QueuedCommand[] = []
 
   return routes
-    .post(
-      '/api/door/control',
-      requireCardAccess,
-      jsonBody(doorControlRequest),
-      async (c) => {
-        const { command } = c.req.valid('json')
-        const actorId = signedIn(c).id
+    .post('/api/door/control', requireCardAccess, jsonBody(doorControlRequest), async (c) => {
+      const { command } = c.req.valid('json')
+      const actorId = signedIn(c).id
 
-        if (command === REFUSED_COMMAND) return refuseRearUnlock(deps, c, actorId)
+      if (command === REFUSED_COMMAND) return refuseRearUnlock(deps, c, actorId)
 
-        const latest = await latestDoorStatus(deps.db)
-        if (!isFresh(latest.reportedAt, deps.config.doorStatusStaleSeconds, new Date())) {
-          return refuse(
-            c,
-            503,
-            'The door service has not reported recently, so the command was not queued. Physical cards still open the door. Check the door service on the lab host.',
-          )
-        }
-
-        const queued: QueuedCommand = { command, queuedAt: new Date().toISOString(), actorId }
-        queue.push(queued)
-
-        await recordAudit(deps.db, {
-          actorId,
-          action: 'door.control',
-          targetId: null,
-          detail: { command },
-        })
-
-        const body: DoorControlResponse = { command, queuedAt: queued.queuedAt }
-        return c.json(body, 202)
-      },
-    )
-    .get('/api/door/status', requireMember, async (c) => {
-      const latest = await latestDoorStatus(deps.db)
-
-      const body: DoorStatusResponse = {
-        status: latest.status,
-        reportedAt: latest.reportedAt?.toISOString() ?? null,
-        stale: !isFresh(latest.reportedAt, deps.config.doorStatusStaleSeconds, new Date()),
-      }
-      return c.json(body)
+      const result = await queueCommand(deps, queue, actorId, command)
+      if (result.status === 503) return refuse(c, 503, result.reason)
+      return c.json(result.body, 202)
     })
+    .get('/api/door/status', requireMember, async (c) => c.json(await readStatus(deps)))
     .get('/api/door/card-table', doorCredential(deps.config), async (c) => {
       const body: { generatedAt: string; cards: SyncCard[] } = {
         generatedAt: new Date().toISOString(),
@@ -148,28 +182,8 @@ export function doorRoutes(deps: AppDeps) {
       }
       return c.json(body)
     })
-    .post(
-      '/api/door/report',
-      doorCredential(deps.config),
-      jsonBody(doorReportRequest),
-      async (c) => {
-        const report = c.req.valid('json')
-
-        await deps.db.insert(doorEvents).values([
-          {
-            kind: STATUS_EVENT_KIND,
-            at: new Date(report.reportedAt),
-            detail: report.status,
-          },
-          ...report.events.map((event) => ({
-            kind: event.kind,
-            at: new Date(event.at),
-            detail: event.detail ?? null,
-          })),
-        ])
-
-        return c.json({ eventsRecorded: report.events.length })
-      },
+    .post('/api/door/report', doorCredential(deps.config), jsonBody(doorReportRequest), async (c) =>
+      c.json({ eventsRecorded: await recordReport(deps.db, c.req.valid('json')) }),
     )
     .get('/api/door/commands', doorCredential(deps.config), (c) => {
       const drained = queue.splice(0, queue.length)
