@@ -15,9 +15,9 @@ runs on a laptop under Docker Compose, and `README.md` is the instructions.
 | `packages/schema` | built | 26 tests, 3 migrations applied to a real Postgres |
 | `packages/ui` | built | 24 tests, rendered in a browser in both themes |
 | `packages/api-client` | built | 14 tests |
-| `services/api` | built | 182 tests against a real Postgres |
+| `services/api` | built | 198 tests against a real Postgres |
 | `services/door` | built, never spoken to hardware | 125 tests against a fake controller |
-| `apps/members` | built | 38 tests, walked through in a browser |
+| `apps/members` | built | 44 tests, walked through in a browser |
 | `apps/signup` | built | 33 tests, walked through in a browser |
 | `apps/admin` | built | 129 tests, walked through in a browser |
 | `tools/import` | built, run against the real dump | 23 tests, plus the run in section 2 |
@@ -25,7 +25,7 @@ runs on a laptop under Docker Compose, and `README.md` is the instructions.
 | Backup and restore | works | `tools/restore-drill.sh` passes, in CI |
 | Deployment | not started | no host exists yet, see section 5 |
 
-571 tests. Lint, typecheck and the voice check are clean.
+593 tests. Lint, typecheck and the voice check are clean.
 
 14,668 lines of TypeScript and Vue, 7,334 lines of tests, 22 routes, 10 ADRs.
 The previous attempt was 50,941 lines and deployed nothing; the difference is
@@ -91,15 +91,37 @@ Fixed, each with a test watched failing first:
    `@esbuild-kit` packages. Not reachable here, since nothing starts esbuild's
    development server, but overridden anyway.
 
-Confirmed and NOT fixed. These are real and they are the top of the next list:
+The five that were confirmed and left open in the first pass are also fixed:
 
-| What | Why it matters | Where |
-|---|---|---|
-| The door command queue is an array in the API process | A deploy silently drops commands the audit log records as queued, and a command queued before an outage could replay later as an unlock with nobody in the building | `services/api/src/routes/door.ts` |
-| Password reset has no completion screen | The link in the mail reaches a route the members app does not render. The 31 imported members with no password still cannot get in | `apps/members` |
-| A signup cannot be undone | No route deletes a member, so an account created by a stranger is permanent | `services/api/src/routes/signup.ts` |
-| Sign-in rate limiting is better-auth's default | It exists, but nothing here has chosen or tested a limit | `services/api/src/auth.ts` |
-| A fresh install cannot make its first admin | Nothing bootstraps an admin or seeds a tool list outside `seed.ts`, so another hackerspace cannot start | `services/api` |
+9. **The door command queue was an array in the API process.** A deploy dropped
+   every waiting command while the audit log said they were queued, and a command
+   that outlived an outage came back hours later and unlocked a door with nobody
+   in the building. They are rows now, and the drain refuses anything that waited
+   more than two minutes and records that it never ran.
+10. **Password reset had no second half.** The link in the email reached a route
+    the members app did not render, which mattered most to the 31 imported
+    members for whom reset is the only way in. The whole loop was then walked end
+    to end against the running system.
+11. **A signup could not be undone.** An admin can now remove an account nobody
+    has used, and is refused for one with a card, a payment, a certification, a
+    signed release, an orientation, a role or any audit history.
+12. **Rate limiting was better-auth's default**: off outside production, 100
+    requests per ten seconds when on. Ten sign-in attempts a minute now, and a
+    correct password is refused while limited so a guesser learns nothing from
+    the difference.
+13. **A fresh install could not make its first admin.**
+    `make admin EMAIL=...` grants it from the host, refuses to create a member,
+    and records the change with no actor, which is what somebody with a shell
+    looks like in an audit log.
+
+Two more came from using the finished screens rather than from a reviewer:
+
+14. **A card assigned to a member without card access** succeeded, reported a
+    slot, and produced a card the door service never writes. The screen now says
+    it will not open the door yet and where to turn access on.
+15. **A reset link opened while already signed in** bounced to the overview,
+    which is right for the sign in screen and wrong for the one screen that can
+    set a new password.
 
 ## 4. Facts that overrule the older documents
 
