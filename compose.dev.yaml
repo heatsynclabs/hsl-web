@@ -15,6 +15,14 @@ services:
       - "127.0.0.1:3000:3000"
     environment:
       NODE_ENV: development
+      SMTP_URL: smtp://mail:1025
+
+  # Catches every message the API sends. Read them at http://localhost:8025.
+  mail:
+    image: axllent/mailpit:v1.28
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8025:8025"
 
   web:
     profiles: ["proxy"]

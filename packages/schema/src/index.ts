@@ -6,7 +6,7 @@
 import type { z } from 'zod'
 
 import * as contracts from './contracts.ts'
-import * as tables from './tables.ts'
+import type * as tables from './tables.ts'
 
 export {
   account,

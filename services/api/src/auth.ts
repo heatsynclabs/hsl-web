@@ -3,6 +3,8 @@ import { betterAuth } from 'better-auth'
 import bcrypt from 'bcryptjs'
 
 import type { Config } from './config.ts'
+import type { Mailer } from './mailer.ts'
+import { createMailer, resetPasswordMessage } from './mailer.ts'
 import type { Database } from './db.ts'
 import { schema } from './db.ts'
 
@@ -28,7 +30,7 @@ const BCRYPT_COST = 10
 
 export type Auth = ReturnType<typeof createAuth>
 
-export function createAuth(db: Database, config: Config) {
+export function createAuth(db: Database, config: Config, mailer: Mailer = createMailer(config)) {
   return betterAuth({
     appName: 'HeatSync Labs',
     baseURL: config.publicOrigin,
@@ -44,6 +46,17 @@ export function createAuth(db: Database, config: Config) {
         hash: (password) => bcrypt.hash(password + config.legacyPepper, BCRYPT_COST),
         verify: ({ hash, password }) => bcrypt.compare(password + config.legacyPepper, hash),
       },
+      // Without this, better-auth answers RESET_PASSWORD_DISABLED, and the 31
+      // imported members who have never had a password would have no way in at
+      // all. config.ts refuses to start in production when SMTP is unset, so
+      // this cannot silently fall back to writing links into a log file.
+      sendResetPassword: async ({ user, url }) => {
+        const { subject, text } = resetPasswordMessage(url)
+        await mailer.send({ to: user.email, subject, text })
+      },
+      // Signing every session out on reset is the point of resetting: somebody
+      // who reached the account keeps it until their cookie expires otherwise.
+      revokeSessionsOnPasswordReset: true,
     },
     advanced: {
       cookiePrefix: 'hsl',

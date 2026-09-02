@@ -32,12 +32,13 @@ const USAGE = `Usage: node --experimental-strip-types tools/import/main.ts [opti
   LEGACY_DATABASE_URL   the Rails database, opened read only
   DATABASE_URL          the members database this writes into`
 
-export function parseArguments(argv: readonly string[]): Options {
+export function parseArguments(argv: readonly string[]): Options | 'usage' {
   const options: Options = { dryRun: false, acceptOrphans: false }
 
   for (const argument of argv) {
     if (argument === '--dry-run') options.dryRun = true
     else if (argument === '--accept-orphans') options.acceptOrphans = true
+    else if (argument === '--help' || argument === '-h') return 'usage'
     else throw new Error(`Unknown option ${argument}.\n\n${USAGE}`)
   }
 
@@ -140,16 +141,37 @@ async function writeTarget(input: WriteInput, preflightReport: string): Promise<
   }
 }
 
-async function main(): Promise<number> {
+/** Everything a bad invocation can hit, before either connection is opened. */
+function readInvocation(): { options: Options; legacyUrl: string; targetUrl: string } | null {
   const options = parseArguments(process.argv.slice(2))
+
+  if (options === 'usage') {
+    console.log(USAGE)
+    return null
+  }
+
   const legacyUrl = process.env.LEGACY_DATABASE_URL ?? ''
   const targetUrl = process.env.DATABASE_URL ?? ''
 
   if (legacyUrl === '' || targetUrl === '') {
-    console.error(`Set LEGACY_DATABASE_URL and DATABASE_URL.\n\n${USAGE}`)
+    throw new Error(`Set LEGACY_DATABASE_URL and DATABASE_URL.\n\n${USAGE}`)
+  }
+
+  return { options, legacyUrl, targetUrl }
+}
+
+async function main(): Promise<number> {
+  let invocation
+  try {
+    invocation = readInvocation()
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error))
     return 1
   }
 
+  if (invocation === null) return 0
+
+  const { options, legacyUrl, targetUrl } = invocation
   const legacy = createClient(legacyUrl, APPLICATION_NAME)
   const target = createClient(targetUrl, APPLICATION_NAME)
   await legacy.connect()

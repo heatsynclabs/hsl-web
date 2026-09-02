@@ -23,6 +23,7 @@ opens a connection. `tools/import/pg.ts` does that and says why.
 |---|---|
 | `--dry-run` | everything, including the report, then rolls back |
 | `--accept-orphans` | carries on past rows whose member no longer exists, skipping them and listing every one. Orphan cards are never skipped |
+| `--help` | prints the options and exits |
 
 | Variable | Holds |
 |---|---|

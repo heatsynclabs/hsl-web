@@ -33,11 +33,14 @@ services:
       DATABASE_PASSWORD_FILE: /run/secrets/db_password
       AUTH_SECRET_FILE: /run/secrets/auth_secret
       DOOR_TOKEN_FILE: /run/secrets/door_token
+      SMTP_URL_FILE: /run/secrets/smtp_url
+      MAIL_FROM: ${HSL_MAIL_FROM:-HeatSync Labs <noreply@heatsynclabs.org>}
       PUBLIC_ORIGIN: ${HSL_SCHEME:?set HSL_SCHEME to http or https}://${HSL_DOMAIN:?set HSL_DOMAIN}
     secrets:
       - db_password
       - auth_secret
       - door_token
+      - smtp_url
     depends_on:
       db:
         condition: service_healthy
@@ -79,3 +82,7 @@ secrets:
     file: ./secrets/auth_secret
   door_token:
     file: ./secrets/door_token
+  # Password reset is the only way in for members with no password. See
+  # services/api/src/mailer.ts. The API refuses to start on https without it.
+  smtp_url:
+    file: ./secrets/smtp_url

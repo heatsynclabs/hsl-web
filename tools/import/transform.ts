@@ -36,13 +36,16 @@ export function canonicalCardNumber(raw: string | null): string {
  * converted digit by digit, so no amount passes through a floating point
  * number on its way to an integer count of cents.
  */
-export function amountToCents(amount: string | null): number {
-  if (amount === null) return 0
+interface Decimal {
+  negative: boolean
+  whole: string
+  fraction: string
+}
 
+function splitDecimal(amount: string): Decimal {
   const trimmed = amount.trim()
   const negative = trimmed.startsWith('-')
-  const unsigned = negative ? trimmed.slice(1) : trimmed
-  const [whole = '', fraction = ''] = unsigned.split('.')
+  const [whole = '', fraction = ''] = (negative ? trimmed.slice(1) : trimmed).split('.')
 
   if (!/^\d+$/.test(whole) || (fraction !== '' && !/^\d+$/.test(fraction))) {
     throw new Error(`payment amount is not a plain decimal: ${amount}`)
@@ -51,7 +54,15 @@ export function amountToCents(amount: string | null): number {
     throw new Error(`payment amount has fractional cents: ${amount}`)
   }
 
+  return { negative, whole, fraction }
+}
+
+export function amountToCents(amount: string | null): number {
+  if (amount === null) return 0
+
+  const { negative, whole, fraction } = splitDecimal(amount)
   const cents = Number(whole) * 100 + Number(fraction.padEnd(2, '0').slice(0, 2))
+
   return negative ? -cents : cents
 }
 

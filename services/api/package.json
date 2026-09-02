@@ -18,12 +18,14 @@
     "bcryptjs": "catalog:",
     "drizzle-orm": "catalog:",
     "hono": "catalog:",
+    "nodemailer": "catalog:",
     "pg": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",
     "@types/pg": "catalog:",
+    "@types/nodemailer": "catalog:",
     "drizzle-kit": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

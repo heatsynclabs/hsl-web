@@ -25,6 +25,8 @@ catalog:
   pg: 8.23.0
   '@types/pg': 8.15.6
   bcryptjs: 3.0.2
+  nodemailer: 9.1.1
+  '@types/nodemailer': 8.0.1
   '@types/node': 22.20.1
   eslint: 10.9.1
   'eslint-plugin-vue': 10.10.0
@@ -34,3 +36,4 @@ catalog:
 # Vite and Vitest need esbuild's postinstall to fetch its native binary.
 onlyBuiltDependencies:
   - esbuild
+

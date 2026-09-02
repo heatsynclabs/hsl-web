@@ -21,6 +21,14 @@ secrets:
 			echo "secrets/$$name written"; \
 		fi; \
 	done
+	@if [ -f secrets/smtp_url ]; then \
+		echo "secrets/smtp_url exists, left alone"; \
+	else \
+		echo "smtp://localhost:1025" > secrets/smtp_url; \
+		chmod 600 secrets/smtp_url; \
+		echo "secrets/smtp_url written with a placeholder. Put the real SMTP URL in it"; \
+		echo "  before deploying, or password reset mail will not arrive."; \
+	fi
 
 backup:
 	./tools/backup.sh

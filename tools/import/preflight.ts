@@ -87,13 +87,7 @@ function blank(value: string | null): boolean {
   return value === null || value.trim() === ''
 }
 
-function checkUsers(users: LegacyUser[]): Finding[] {
-  const ids = new Set(users.map((row) => row.id))
-  const known = (pointer: number | null) => pointer === null || ids.has(pointer)
-  const badHash = (row: LegacyUser) =>
-    !blank(row.encryptedPassword) &&
-    !KNOWN_HASH_PREFIXES.some((prefix) => (row.encryptedPassword ?? '').startsWith(prefix))
-
+function checkMemberIdentity(users: LegacyUser[]): Finding[] {
   return [
     ...report({
       severity: 'refusal',
@@ -114,6 +108,22 @@ function checkUsers(users: LegacyUser[]): Finding[] {
       detail: 'The members database has no name to show for this row.',
     }),
     ...report({
+      severity: 'notice',
+      check: 'email is not lowercase',
+      ids: users.filter((row) => row.email !== canonicalEmail(row.email ?? '')).map((r) => r.id),
+      detail: 'Sign-in compares lowercased, so the import lowercases these.',
+    }),
+  ]
+}
+
+function checkMemberCredentials(users: LegacyUser[]): Finding[] {
+  const ids = new Set(users.map((row) => row.id))
+  const badHash = (row: LegacyUser) =>
+    !blank(row.encryptedPassword) &&
+    !KNOWN_HASH_PREFIXES.some((prefix) => (row.encryptedPassword ?? '').startsWith(prefix))
+
+  return [
+    ...report({
       severity: 'refusal',
       check: 'unexpected password hash',
       ids: users.filter(badHash).map((row) => row.id),
@@ -127,31 +137,36 @@ function checkUsers(users: LegacyUser[]): Finding[] {
     }),
     ...report({
       severity: 'notice',
-      check: 'email is not lowercase',
-      ids: users.filter((row) => row.email !== canonicalEmail(row.email ?? '')).map((r) => r.id),
-      detail: 'Sign-in compares lowercased, so the import lowercases these.',
-    }),
-    ...report({
-      severity: 'notice',
       check: 'oriented by an unknown member',
-      ids: users.filter((row) => !known(row.orientedById)).map((row) => row.id),
+      ids: users
+        .filter((row) => row.orientedById !== null && !ids.has(row.orientedById))
+        .map((row) => row.id),
       detail: 'The pointer is dropped and the orientation date is kept.',
     }),
   ]
 }
 
-function checkCards(cards: LegacyCard[], userIds: Set<number>): Finding[] {
-  const unreadable = (row: LegacyCard) =>
-    row.cardNumber === null || !canonical(row.cardNumber).ok
+function unreadableNumber(row: LegacyCard): boolean {
+  if (row.cardNumber === null) return true
+
+  try {
+    canonicalCardNumber(row.cardNumber)
+    return false
+  } catch {
+    return true
+  }
+}
+
+function checkCardNumbers(cards: LegacyCard[], userIds: Set<number>): Finding[] {
   const canonicalNumbers = cards
-    .filter((row) => !unreadable(row))
+    .filter((row) => !unreadableNumber(row))
     .map((row) => ({ id: row.id, key: canonicalCardNumber(row.cardNumber) }))
 
   return [
     ...report({
       severity: 'refusal',
       check: 'card number is not eight hex characters or fewer',
-      ids: cards.filter(unreadable).map((row) => row.id),
+      ids: cards.filter(unreadableNumber).map((row) => row.id),
       detail: 'The controller stores eight hex characters and nothing else.',
     }),
     ...report({
@@ -172,6 +187,11 @@ function checkCards(cards: LegacyCard[], userIds: Set<number>): Finding[] {
       ids: cards.filter((row) => row.permissions === null).map((row) => row.id),
       detail: 'Without a mask there is no way to say whether this card opens the door.',
     }),
+  ]
+}
+
+function checkCardSlots(cards: LegacyCard[]): Finding[] {
+  return [
     ...report({
       severity: 'refusal',
       check: 'card slot outside the EEPROM table',
@@ -191,15 +211,6 @@ function checkCards(cards: LegacyCard[], userIds: Set<number>): Finding[] {
         'taken against the live controller with ?a, not something this script does.',
     }),
   ]
-}
-
-function canonical(cardNumber: string): { ok: boolean } {
-  try {
-    canonicalCardNumber(cardNumber)
-    return { ok: true }
-  } catch {
-    return { ok: false }
-  }
 }
 
 function checkCertifications(snapshot: LegacySnapshot, userIds: Set<number>): Finding[] {
@@ -324,8 +335,10 @@ export function preflight(snapshot: LegacySnapshot): Finding[] {
   const userIds = new Set(snapshot.users.map((row) => row.id))
 
   return [
-    ...checkUsers(snapshot.users),
-    ...checkCards(snapshot.cards, userIds),
+    ...checkMemberIdentity(snapshot.users),
+    ...checkMemberCredentials(snapshot.users),
+    ...checkCardNumbers(snapshot.cards, userIds),
+    ...checkCardSlots(snapshot.cards),
     ...checkCertifications(snapshot, userIds),
     ...checkPayments(snapshot.payments, userIds),
     ...checkContracts(snapshot.contracts, userIds),

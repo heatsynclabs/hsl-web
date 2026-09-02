@@ -25,7 +25,7 @@ const DEFAULT_PORT = 3000
  */
 const DEFAULT_DOOR_STATUS_STALE_SECONDS = 120
 
-const SECRET_NAMES = ['AUTH_SECRET', 'DOOR_TOKEN', 'DATABASE_PASSWORD'] as const
+const SECRET_NAMES = ['AUTH_SECRET', 'DOOR_TOKEN', 'DATABASE_PASSWORD', 'SMTP_URL'] as const
 
 const environmentSchema = z.object({
   DATABASE_URL: z.string().min(1),
@@ -41,6 +41,8 @@ const environmentSchema = z.object({
     .min(1)
     .default(DEFAULT_DOOR_STATUS_STALE_SECONDS),
   SPACE_API_TEMPLATE_PATH: z.string().min(1).optional(),
+  SMTP_URL: z.string().min(1).optional(),
+  MAIL_FROM: z.string().default('HeatSync Labs <noreply@heatsynclabs.org>'),
 })
 
 export interface Config {
@@ -53,6 +55,8 @@ export interface Config {
   useSecureCookies: boolean
   doorStatusStaleSeconds: number
   spaceApiTemplatePath: string | null
+  smtpUrl: string | null
+  mailFrom: string
 }
 
 type Environment = Record<string, string | undefined>
@@ -102,6 +106,19 @@ export function loadConfig(environment: Environment = process.env): Config {
 
   const values = parsed.data
 
+  // Password reset is the only way in for the 31 imported members who have no
+  // password hash, and for anyone who forgets theirs. A deployment that cannot
+  // send mail locks those people out, so it fails here rather than at the
+  // moment somebody first asks for a link. https is the signal that this is a
+  // real deployment rather than a laptop.
+  if (values.PUBLIC_ORIGIN.startsWith('https://') && values.SMTP_URL === undefined) {
+    throw new Error(
+      'SMTP_URL is not set, so password reset mail cannot be sent and a member who forgets ' +
+        'their password has no way back in. Set SMTP_URL, or SMTP_URL_FILE naming a file that ' +
+        'holds it. The API did not start.',
+    )
+  }
+
   return {
     port: values.PORT,
     databaseUrl: connectionStringWithPassword(values.DATABASE_URL, values.DATABASE_PASSWORD),
@@ -114,5 +131,7 @@ export function loadConfig(environment: Environment = process.env): Config {
     useSecureCookies: values.PUBLIC_ORIGIN.startsWith('https://'),
     doorStatusStaleSeconds: values.DOOR_STATUS_STALE_SECONDS,
     spaceApiTemplatePath: values.SPACE_API_TEMPLATE_PATH ?? null,
+    smtpUrl: values.SMTP_URL ?? null,
+    mailFrom: values.MAIL_FROM,
   }
 }

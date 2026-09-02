@@ -17,6 +17,9 @@ const complete = {
   PUBLIC_ORIGIN: 'https://members.heatsynclabs.org',
   AUTH_SECRET: 'a secret that is long enough',
   DOOR_TOKEN: 'a door token that is long enough',
+  // An https origin means a real deployment, and one of those has to be able to
+  // send password reset mail. See the guard in config.ts and password-reset.test.ts.
+  SMTP_URL: 'smtp://mail:1025',
 }
 
 describe('reading the environment', () => {

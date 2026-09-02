@@ -16,11 +16,15 @@ import { paymentsFor } from './payments.ts'
  * The member's own record. Everything here is about the person making the
  * request and nobody else.
  *
- * PATCH accepts the contact fields and the two visibility flags, and nothing
+ * PATCH accepts the contact fields and the three visibility flags, and nothing
  * else. The Rails attr_accessible list let a member set accountant,
- * member_level, waiver, orientation and hidden on themself; those fields are
- * not in patchMeRequest, the schema is strict, so an attempt to send one is
- * refused with a 400 rather than quietly dropped.
+ * member_level, waiver and orientation on themself; those four are not in
+ * patchMeRequest, the schema is strict, so an attempt to send one is refused
+ * with a 400 rather than quietly dropped.
+ *
+ * hidden was on that Rails list too and is deliberately kept here. It is the
+ * member asking to be left out of the directory, which is their own preference
+ * rather than a privilege, and it grants nothing. The other four are privileges.
  */
 
 export async function meResponseFor(db: Database, member: Member): Promise<MeResponse> {
