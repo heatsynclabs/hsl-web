@@ -1,7 +1,7 @@
 # @hsl/admin
 
-The screens an admin uses: the member directory, one member in full, the audit
-log, and the form an accountant records a payment on. Caddy serves it at
+The screens an admin uses: the member directory, one member in full, the door,
+the audit log, and the form an accountant records a payment on. Caddy serves it at
 `/admin` on the same origin as the API, so the session cookie is a plain
 first-party cookie and there is no CORS.
 
@@ -11,7 +11,7 @@ log: any admin acts immediately and every privileged change writes an
 append-only row. The audit screen is what took the queue's place, and the member
 screen says so once, plainly, instead of repeating it above every control.
 
-## The four screens
+## The five screens
 
 **Directory** Name, level, card and dues status, with a search box over name and
 email and a filter for whether a member holds a card.
@@ -20,6 +20,19 @@ email and a filter for whether a member holds a card.
 member level, orientation, and card access. Card access has its own control and
 its own confirmation, because it is the one that opens a building. Cards held,
 with assign and deactivate. Certifications, with grant and revoke.
+
+**Door** Enrolling a card, the card table, a sync button, the door controls and
+the door's own event log. Enrolling used to be five manual steps: hold the card
+to the reader, find the refused read in the door log, work the number out by
+hand from the low and high halves the controller logs it in, create the card
+row, then remember to run `cards#upload_all`. The door service reconstructs the
+tag and the card table is pushed on a timer, so this screen is the part left
+over: see the card appear, choose Assign, pick a member.
+
+Assigning is confirmed before it is sent, because it takes an EEPROM slot on a
+physical controller and lets somebody into a building. The card table flags any
+row the next pass will clear, and any slot above 199, which the firmware writes
+and its read loop never reaches.
 
 **Audit** When, actor, action, target and detail, newest first, paged with the
 `limit` and `before` parameters the contract already carries. Paging walks
@@ -56,7 +69,10 @@ pnpm --filter @hsl/admin typecheck
 The suites assert behaviour: the directory renders the members the API returned,
 an empty search says so, a refused request puts the API's own sentence on the
 screen instead of leaving it blank, a full card table prints the refusal an
-admin can act on, and the guard sends every wrong role to the refusal screen
+admin can act on, the enrolment queue renders the cards the door service
+reported and says how to fill itself when it is empty, a card already issued
+reads as a sentence rather than a 409, a slot above 199 is marked as one the
+reader cannot see, and the guard sends every wrong role to the refusal screen
 rather than into a directory it cannot read.
 
 They render with `renderToString` from `@vue/test-utils` rather than `mount`,
@@ -75,6 +91,19 @@ catalog. It talks to `services/api` over HTTP and to nothing else.
 
 The built bundle carries the 29 marks `@hsl/ui` inlines, which is most of its
 size. `packages/ui/README.md` records that cost and what would fix it.
+
+## Polling on the door screen
+
+The door service runs a pass every sixty seconds by default
+(`RECONCILE_INTERVAL_SECONDS` in `services/door/src/config.ts`), so the door
+screen asks the API again every fifteen seconds for the enrolment queue, the
+door status and the event log. A card held to the reader shows up within a pass
+rather than after a manual reload.
+
+A poll that fails replaces nothing. The panel keeps the last answer it had, and
+both the queue and the status carry their own `stale` flag from the API, which
+is what the screen says out loud rather than drawing an old reading as a live
+one.
 
 ## Pagination, not virtualisation
 

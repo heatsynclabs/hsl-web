@@ -78,7 +78,10 @@ async function assignCard(
   if (duplicate.length > 0) {
     return {
       status: 409,
-      reason: `Card ${request.cardNumber} is already in slot ${duplicate[0]?.id}.`,
+      reason:
+        `Card ${request.cardNumber} is already in slot ${duplicate[0]?.id}, so no slot was ` +
+        'taken. It is already issued. Find it in the card table to see who holds it, rather ' +
+        'than assigning it again.',
     }
   }
 

@@ -1,10 +1,14 @@
 import type {
   AuditEntry,
   CardRecord,
+  CardTableViewResponse,
+  DoorEventEntry,
+  DoorStatusResponse,
   MemberDirectoryEntry,
   MemberResponse,
   MemberSelf,
   MeResponse,
+  UnknownCard,
 } from '@hsl/schema'
 
 /**
@@ -130,4 +134,84 @@ export function meBody(overrides: Partial<MemberSelf> = {}): MeResponse {
     certifications: [],
     payments: [],
   }
+}
+
+export const unknownCards: UnknownCard[] = [
+  {
+    cardNumber: '0004B1C7',
+    outcome: 'denied',
+    timesSeen: 3,
+    firstSeen: '2026-09-01T17:40:00.000Z',
+    lastSeen: '2026-09-01T17:44:00.000Z',
+  },
+  {
+    cardNumber: '00021D40',
+    outcome: 'granted',
+    timesSeen: 1,
+    firstSeen: '2026-09-01T16:02:00.000Z',
+    lastSeen: '2026-09-01T16:02:00.000Z',
+  },
+]
+
+/**
+ * Slot 200 is in here on purpose. Production holds one card up there, the
+ * firmware writes it and never reads it, and the screen has to say so.
+ */
+export const cardTableView: CardTableViewResponse = {
+  slots: [
+    {
+      slot: 17,
+      cardNumber: '0000C4D9',
+      memberId: 'mbr_volkov',
+      memberName: 'M. Volkov',
+      active: false,
+      reconciled: false,
+    },
+    {
+      slot: 41,
+      cardNumber: '0000A1B2',
+      memberId: 'mbr_rivera',
+      memberName: 'Sam Rivera',
+      active: true,
+      reconciled: true,
+    },
+    {
+      slot: 200,
+      cardNumber: '0000F00D',
+      memberId: 'mbr_tanaka',
+      memberName: 'J. Tanaka',
+      active: true,
+      reconciled: true,
+    },
+  ],
+  usedSlots: 3,
+  freeSlots: 198,
+  nextFreeSlot: 0,
+}
+
+export const doorEventEntries: DoorEventEntry[] = [
+  {
+    id: 512,
+    kind: 'card-presented',
+    at: '2026-09-01T17:44:00.000Z',
+    detail: { cardNumber: '0004B1C7', outcome: 'denied' },
+  },
+  {
+    id: 511,
+    kind: 'card-table-synced',
+    at: '2026-09-01T17:43:00.000Z',
+    detail: null,
+  },
+  {
+    id: 510,
+    kind: 'weather-station-read',
+    at: '2026-09-01T17:42:00.000Z',
+    detail: { celsius: 31 },
+  },
+]
+
+export const doorReportingLive: DoorStatusResponse = {
+  status: { frontLocked: true, rearLocked: true, armed: 255, activated: 255, alarm2: 1, alarm3: 1 },
+  reportedAt: '2026-09-01T17:44:00.000Z',
+  stale: false,
 }

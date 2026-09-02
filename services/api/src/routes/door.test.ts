@@ -2,6 +2,7 @@ import { auditLog, CARD_SLOT_COUNT } from '@hsl/schema'
 import { testClient } from 'hono/testing'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
+import { latestDoorStatus } from './door.ts'
 import type { Harness, SignedInMember } from '../test-support/harness.ts'
 import {
   addCard,
@@ -269,5 +270,69 @@ describeDatabase('the door', () => {
 
       expect(body).toStrictEqual({ status: null, reportedAt: null, stale: true })
     })
+  })
+})
+
+/**
+ * A report arrived during a review with a timestamp in 2099. It became the
+ * newest status permanently, and because a future time is always inside the
+ * staleness window, every screen went on saying the door had just reported.
+ * A member would have been told the front door was unlocked on the strength of
+ * a reading that never happened.
+ */
+describeDatabase('a door report with a clock that is wrong', () => {
+  const harness: Harness = createHarness()
+  const client = testClient(harness.app)
+
+  beforeEach(async () => {
+    await harness.reset()
+  })
+
+  afterAll(async () => {
+    await harness.close()
+  })
+
+  const report = async (reportedAt: string) =>
+    await client.api.door.report.$post(
+      {
+        json: {
+          reportedAt,
+          status: { frontLocked: false, rearLocked: true, armed: 0, activated: 0, alarm2: 0, alarm3: 0 },
+          events: [],
+        },
+      },
+      { headers: doorHeaders(harness) },
+    )
+
+  it('does not let a time years ahead become the newest status forever', async () => {
+    expect((await report('2099-01-01T00:00:00.000Z')).status).toBe(200)
+
+    const latest = await latestDoorStatus(harness.db)
+    expect(latest.reportedAt!.getTime()).toBeLessThanOrEqual(Date.now() + 1000)
+  })
+
+  it('keeps the reading, because it is still the most recent thing the door said', async () => {
+    await report('2099-01-01T00:00:00.000Z')
+
+    const latest = await latestDoorStatus(harness.db)
+    expect(latest.status).toMatchObject({ frontLocked: false, rearLocked: true })
+  })
+
+  it('allows a little drift, because neither clock is set by the other', async () => {
+    const slightlyAhead = new Date(Date.now() + 30_000).toISOString()
+
+    await report(slightlyAhead)
+
+    const latest = await latestDoorStatus(harness.db)
+    expect(latest.reportedAt!.toISOString()).toBe(slightlyAhead)
+  })
+
+  it('leaves a time in the past exactly as it was', async () => {
+    const earlier = new Date(Date.now() - 60_000).toISOString()
+
+    await report(earlier)
+
+    const latest = await latestDoorStatus(harness.db)
+    expect(latest.reportedAt!.toISOString()).toBe(earlier)
   })
 })

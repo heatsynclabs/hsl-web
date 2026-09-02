@@ -30,6 +30,12 @@ const routes = [
     meta: { needs: 'admin' as const },
   },
   {
+    path: '/door',
+    name: 'door',
+    component: () => import('./views/DoorView.vue'),
+    meta: { needs: 'admin' as const },
+  },
+  {
     path: '/audit',
     name: 'audit',
     component: () => import('./views/AuditView.vue'),

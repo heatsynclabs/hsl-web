@@ -52,6 +52,18 @@ describe('the admin router guard', () => {
     expect(await whereDoesItLand('/audit')).toBe('audit')
   })
 
+  it('opens the door screen for an admin', async () => {
+    await loadSession(apiAnswering({ admin: true }))
+
+    expect(await whereDoesItLand('/door')).toBe('door')
+  })
+
+  it('refuses the door screen to an accountant who is not an admin', async () => {
+    await loadSession(apiAnswering({ admin: false, accountant: true }))
+
+    expect(await whereDoesItLand('/door')).toBe('no-access')
+  })
+
   it('refuses the directory to a member who is not an admin', async () => {
     await loadSession(apiAnswering({ admin: false, accountant: false }))
 

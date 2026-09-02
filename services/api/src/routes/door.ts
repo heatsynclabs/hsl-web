@@ -150,16 +150,50 @@ async function readStatus(deps: AppDeps): Promise<DoorStatusResponse> {
   }
 }
 
+/**
+ * How far ahead of this server a reported time may be before it is treated as
+ * wrong. The door service and the API keep their own clocks and neither is
+ * synchronised to the other, so a little drift is ordinary.
+ */
+const CLOCK_SKEW_SECONDS = 120
+
+/**
+ * A time this server is willing to believe.
+ *
+ * Without this, one report with a timestamp years ahead wins "the newest
+ * status" for as long as it sits in the table, and it is always newer than the
+ * staleness window, so the door reads as freshly reported forever and the
+ * screens stop being able to say they do not know. That is worse than showing
+ * nothing: a member is told the front door is unlocked on the strength of a
+ * reading that never happened.
+ *
+ * A future time is clamped rather than refused, because the reading itself is
+ * still the most recent thing the controller said and throwing it away loses
+ * real information about a building.
+ */
+function believableTime(reported: string, now: Date): Date {
+  const at = new Date(reported)
+  const ceiling = now.getTime() + CLOCK_SKEW_SECONDS * 1000
+
+  return at.getTime() > ceiling ? now : at
+}
+
 /** Records one status snapshot and whatever events came with it, in one write. */
 async function recordReport(
   db: Database,
   report: z.infer<typeof doorReportRequest>,
 ): Promise<number> {
+  const now = new Date()
+
   await db.insert(doorEvents).values([
-    { kind: STATUS_EVENT_KIND, at: new Date(report.reportedAt), detail: report.status },
+    {
+      kind: STATUS_EVENT_KIND,
+      at: believableTime(report.reportedAt, now),
+      detail: report.status,
+    },
     ...report.events.map((event) => ({
       kind: event.kind,
-      at: new Date(event.at),
+      at: believableTime(event.at, now),
       detail: event.detail ?? null,
     })),
   ])

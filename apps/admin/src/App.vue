@@ -38,6 +38,7 @@ const links = computed(() => {
 
   const all = [
     { name: 'directory', label: 'Directory', needs: 'admin' as const },
+    { name: 'door', label: 'Door', needs: 'admin' as const },
     { name: 'audit', label: 'Audit', needs: 'admin' as const },
     { name: 'payments', label: 'Payments', needs: 'accountant' as const },
   ]
