@@ -107,9 +107,24 @@ export function createHarness(): Harness {
   }
 }
 
+/**
+ * audit_log and door_events refuse UPDATE, DELETE and TRUNCATE in the database,
+ * because they are the record of who opened a building and who changed who could.
+ * See migrations 0001 and 0002.
+ *
+ * Tests need a clean table between cases, so this suspends that refusal for the
+ * length of one statement and turns it straight back on. session_replication_role
+ * is per session and this pool is the test's own, so nothing outside sees it.
+ * Never do this anywhere but here.
+ */
 async function truncate(db: Database, tables: string[]): Promise<void> {
   const names = tables.map((table) => `"${table}"`).join(', ')
-  await db.execute(sql.raw(`truncate table ${names} restart identity cascade`))
+  await db.execute(sql.raw(`set session_replication_role = replica`))
+  try {
+    await db.execute(sql.raw(`truncate table ${names} restart identity cascade`))
+  } finally {
+    await db.execute(sql.raw(`set session_replication_role = default`))
+  }
 }
 
 /** Creates a member with the given fields and returns the cookie that signs them in. */

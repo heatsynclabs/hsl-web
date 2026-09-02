@@ -15,6 +15,13 @@
       "when": 1788319346641,
       "tag": "0001_table_comments",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788320000000,
+      "tag": "0002_audit_log_truncate",
+      "breakpoints": true
     }
   ]
 }
