@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'node:crypto'
 
 import type {
   DoorCommand,
+  DoorCommandRow,
   DoorControlResponse,
   DoorStatus,
   DoorStatusResponse,
@@ -11,6 +12,7 @@ import type {
 import {
   cards,
   doorControlRequest,
+  doorCommands,
   doorEvents,
   doorReportRequest,
   doorStatus,
@@ -18,7 +20,7 @@ import {
   REFUSED_DOOR_COMMANDS,
   user,
 } from '@hsl/schema'
-import { and, asc, desc, eq, lte } from 'drizzle-orm'
+import { and, asc, desc, eq, isNull, lt, lte } from 'drizzle-orm'
 import type { z } from 'zod'
 import type { Context, MiddlewareHandler } from 'hono'
 import { Hono } from 'hono'
@@ -57,11 +59,15 @@ const STATUS_EVENT_KIND = 'status'
  */
 
 
-interface QueuedCommand {
-  command: DoorCommand
-  queuedAt: string
-  actorId: string
-}
+/**
+ * How long a waiting command stays worth running.
+ *
+ * A door command is an immediate intention: somebody is standing at the door.
+ * If the door service has not collected it within this window the person has
+ * walked away, and running it later unlocks a door with nobody there. Two
+ * minutes is two missed passes at the default sixty second interval.
+ */
+const COMMAND_TTL_SECONDS = 120
 
 /**
  * What the door service gets when it drains the queue: the commands themselves,
@@ -118,6 +124,31 @@ export function isFresh(reportedAt: Date | null, staleSeconds: number, now: Date
   return now.getTime() - reportedAt.getTime() <= staleSeconds * 1000
 }
 
+/** Waiting commands that have now waited too long to be worth running. */
+async function expireStaleCommands(db: Database, now: Date): Promise<DoorCommandRow[]> {
+  const cutoff = new Date(now.getTime() - COMMAND_TTL_SECONDS * 1000)
+
+  return db
+    .update(doorCommands)
+    .set({ resolvedAt: now, resolution: 'expired' })
+    .where(and(isNull(doorCommands.resolvedAt), lt(doorCommands.requestedAt, cutoff)))
+    .returning()
+}
+
+/**
+ * Hands the waiting commands to the door service and marks them sent, in one
+ * statement so two drains cannot both take the same one.
+ */
+async function claimCommands(db: Database, now: Date): Promise<DoorCommandRow[]> {
+  const claimed = await db
+    .update(doorCommands)
+    .set({ resolvedAt: now, resolution: 'sent' })
+    .where(isNull(doorCommands.resolvedAt))
+    .returning()
+
+  return claimed.sort((a, b) => a.requestedAt.getTime() - b.requestedAt.getTime())
+}
+
 /**
  * Queues one command for the door service to pick up on its next pass.
  *
@@ -129,7 +160,6 @@ export function isFresh(reportedAt: Date | null, staleSeconds: number, now: Date
  */
 async function queueCommand(
   deps: AppDeps,
-  queue: QueuedCommand[],
   actorId: string,
   command: DoorCommand,
 ): Promise<{ status: 202; body: DoorControlResponse } | { status: 503; reason: string }> {
@@ -142,8 +172,10 @@ async function queueCommand(
     }
   }
 
-  const queued: QueuedCommand = { command, queuedAt: new Date().toISOString(), actorId }
-  queue.push(queued)
+  const [queued] = await deps.db
+    .insert(doorCommands)
+    .values({ command, requestedById: actorId })
+    .returning()
 
   await recordAudit(deps.db, {
     actorId,
@@ -152,7 +184,10 @@ async function queueCommand(
     detail: { command },
   })
 
-  return { status: 202, body: { command, queuedAt: queued.queuedAt } }
+  return {
+    status: 202,
+    body: { command, queuedAt: (queued?.requestedAt ?? new Date()).toISOString() },
+  }
 }
 
 /** The status a member sees, with whether it is old enough not to trust. */
@@ -210,6 +245,48 @@ async function recordReport(
   return report.events.length
 }
 
+/**
+ * The commands waiting to run. Anything that waited too long is settled first
+ * and recorded, so an admin can see that a command was asked for and never ran
+ * rather than finding it silently missing.
+ */
+async function drainCommands(db: Database): Promise<DoorCommand[]> {
+  const now = new Date()
+
+  const expired = await expireStaleCommands(db, now)
+  if (expired.length > 0) await recordExpiredCommands(db, expired, now)
+
+  return (await claimCommands(db, now)).map((row) => row.command as DoorCommand)
+}
+
+/** What the door service reconciles the controller to, and which slots it owns. */
+async function cardTableForService(db: Database) {
+  return {
+    generatedAt: new Date().toISOString(),
+    cards: await reconcilableCards(db),
+    ownedSlots: await issuedSlots(db),
+  }
+}
+
+/** Says in the door history that a command was asked for and never ran. */
+async function recordExpiredCommands(
+  db: Database,
+  expired: DoorCommandRow[],
+  at: Date,
+): Promise<void> {
+  await db.insert(doorEvents).values(
+    expired.map((row) => ({
+      kind: 'door-command-expired',
+      at,
+      detail: {
+        command: row.command,
+        requestedAt: row.requestedAt.toISOString(),
+        waitedSeconds: Math.round((at.getTime() - row.requestedAt.getTime()) / 1000),
+      },
+    })),
+  )
+}
+
 /** An admin asking for the card table now. Audited, because it touches the door. */
 async function recordSyncRequest(deps: AppDeps, actorId: string): Promise<SyncResponse> {
   await recordAudit(deps.db, { actorId, action: 'door.sync', targetId: null })
@@ -218,9 +295,9 @@ async function recordSyncRequest(deps: AppDeps, actorId: string): Promise<SyncRe
 
 export function doorRoutes(deps: AppDeps) {
   const routes = new Hono<AppEnv>()
-  const queue: QueuedCommand[] = []
-  // Held in memory beside the queue, and drained the same way. Losing it on a
-  // restart costs nothing: the reconcile loop runs on a timer regardless.
+  // Losing this on a restart costs nothing: the reconcile loop runs on a timer
+  // regardless, so a missed sync request only means waiting for the next pass.
+  // Commands are different and live in the database.
   let syncRequested = false
 
   return routes
@@ -233,19 +310,14 @@ export function doorRoutes(deps: AppDeps) {
         return refuseByLabDecision(deps, c, { actorId, command, reason: refusal })
       }
 
-      const result = await queueCommand(deps, queue, actorId, command)
+      const result = await queueCommand(deps, actorId, command)
       if (result.status === 503) return refuse(c, 503, result.reason)
       return c.json(result.body, 202)
     })
     .get('/api/door/status', requireMember, async (c) => c.json(await readStatus(deps)))
-    .get('/api/door/card-table', doorCredential(deps.config), async (c) => {
-      const body = {
-        generatedAt: new Date().toISOString(),
-        cards: await reconcilableCards(deps.db),
-        ownedSlots: await issuedSlots(deps.db),
-      }
-      return c.json(body)
-    })
+    .get('/api/door/card-table', doorCredential(deps.config), async (c) =>
+      c.json(await cardTableForService(deps.db)),
+    )
     .post('/api/door/report', doorCredential(deps.config), jsonBody(doorReportRequest), async (c) =>
       c.json({ eventsRecorded: await recordReport(deps.db, c.req.valid('json')) }),
     )
@@ -253,10 +325,9 @@ export function doorRoutes(deps: AppDeps) {
       syncRequested = true
       return c.json(await recordSyncRequest(deps, signedIn(c).id), 202)
     })
-    .get('/api/door/commands', doorCredential(deps.config), (c) => {
-      const drained = queue.splice(0, queue.length)
+    .get('/api/door/commands', doorCredential(deps.config), async (c) => {
       const body: DoorCommandQueueResponse = {
-        commands: drained.map((entry) => entry.command),
+        commands: await drainCommands(deps.db),
         syncRequested,
       }
       syncRequested = false

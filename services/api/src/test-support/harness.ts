@@ -19,7 +19,8 @@ import { createDatabase } from '../db.ts'
 
 const databaseUrl = process.env.DATABASE_URL ?? null
 
-const TEST_PASSWORD = 'a wrench and a soldering iron'
+/** Exported so a test can prove the right password is refused while limited. */
+export const TEST_PASSWORD = 'a wrench and a soldering iron'
 
 /**
  * The tables a test changes while the members stay as they were. Creating a

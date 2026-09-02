@@ -1,4 +1,4 @@
-.PHONY: up down logs secrets seed reset backup restore check import legacy-restore
+.PHONY: up down logs secrets seed reset backup restore check import legacy-restore admin
 
 # The whole stack in Docker: database, API, the three apps behind Caddy, and a
 # mail catcher. Reads .env. See README.md.
@@ -36,6 +36,15 @@ secrets:
 # lab's data. Refuses to run against a database that already holds members.
 seed:
 	docker compose run --rm --entrypoint node api dist/seed.js
+
+# Makes an existing member an admin. A fresh install has nobody who can reach
+# the admin app, and every route that could grant admin already needs one, so
+# the first one is granted from the host.
+#
+#   make admin EMAIL=someone@heatsynclabs.org
+admin:
+	@test -n "$(EMAIL)" || { echo "Usage: make admin EMAIL=someone@example.org"; exit 1; }
+	docker compose run --rm --entrypoint node api dist/make-admin.js "$(EMAIL)"
 
 # Throws the local database away and rebuilds it from the migrations. Local
 # only: it deletes the volume.

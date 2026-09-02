@@ -3,8 +3,13 @@ import bcrypt from 'bcryptjs'
 import { testClient } from 'hono/testing'
 import { afterAll, beforeEach, expect, it } from 'vitest'
 
-import type { Harness } from './test-support/harness.ts'
-import { createHarness, describeDatabase } from './test-support/harness.ts'
+import type { Harness, SignedInMember } from './test-support/harness.ts'
+import {
+  addMember,
+  createHarness,
+  describeDatabase,
+  TEST_PASSWORD,
+} from './test-support/harness.ts'
 
 /**
  * Nobody resets a password at cutover. The legacy database holds 1,030 bcrypt
@@ -99,3 +104,47 @@ function devisePasswordHash(password: string): string {
   const hash = bcrypt.hashSync(password, 10)
   return hash.replace(/^\$2b\$/, '$2a$')
 }
+
+/**
+ * better-auth turns rate limiting on only in production and allows 100 requests
+ * per 10 seconds, which is enough to walk a password list against a known
+ * member address. The limits here are chosen, so they are worth a test.
+ */
+describeDatabase('guessing a password', () => {
+  const harness: Harness = createHarness()
+  let member: SignedInMember
+
+  beforeEach(async () => {
+    await harness.reset()
+    member = await addMember(harness)
+  })
+
+  afterAll(async () => {
+    await harness.close()
+  })
+
+  // /api/auth/* is mounted as a wildcard, so the typed client cannot address a
+  // path inside it. This is the same request a browser makes.
+  const guess = async (password: string) =>
+    await harness.app.request('/api/auth/sign-in/email', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: 'http://localhost:3000' },
+      body: JSON.stringify({ email: member.member.email, password }),
+    })
+
+  it('stops after ten tries in a minute', async () => {
+    const codes: number[] = []
+    for (let attempt = 0; attempt < 14; attempt += 1) {
+      codes.push((await guess('not the password')).status)
+    }
+
+    expect(codes.filter((code) => code === 401)).toHaveLength(10)
+    expect(codes.filter((code) => code === 429).length).toBeGreaterThan(0)
+  })
+
+  it('stops the right password too, so a guesser learns nothing from the difference', async () => {
+    for (let attempt = 0; attempt < 12; attempt += 1) await guess('not the password')
+
+    expect((await guess(TEST_PASSWORD)).status).toBe(429)
+  })
+})

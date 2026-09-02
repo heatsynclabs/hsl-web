@@ -1,4 +1,5 @@
-import { auditLog, CARD_SLOT_COUNT, type DoorCommand } from '@hsl/schema'
+import { auditLog, CARD_SLOT_COUNT, doorEvents, type DoorCommand } from '@hsl/schema'
+import { eq, sql } from 'drizzle-orm'
 import { testClient } from 'hono/testing'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
@@ -10,6 +11,7 @@ import {
   createHarness,
   describeDatabase,
   doorHeaders,
+  ok,
   reportDoorStatus,
 } from '../test-support/harness.ts'
 
@@ -405,5 +407,106 @@ describeDatabase('the 2018 rear door decision', () => {
     expect(rows).toEqual([
       expect.objectContaining({ action: 'door.control.refused', detail: { command: 'unlock' } }),
     ])
+  })
+})
+
+/**
+ * The command queue used to be an array in this process. A deploy dropped every
+ * waiting command while the audit log went on saying they had been queued, and
+ * a command that outlived an outage came back hours later and unlocked a door
+ * with nobody in the building.
+ */
+describeDatabase('waiting door commands', () => {
+  const harness: Harness = createHarness()
+  const client = testClient(harness.app)
+
+  let holder: SignedInMember
+
+  beforeEach(async () => {
+    await harness.reset()
+    holder = await addMember(harness, { cardAccess: true })
+    await reportDoorStatus(harness)
+  })
+
+  afterAll(async () => {
+    await harness.close()
+  })
+
+  const ask = async (command: DoorCommand) =>
+    await client.api.door.control.$post({ json: { command } }, { headers: holder.headers })
+
+  const drain = async () =>
+    ok(
+      await (
+        await client.api.door.commands.$get({}, { headers: doorHeaders(harness) })
+      ).json(),
+    )
+
+  const age = async (seconds: number) =>
+    await harness.db.execute(
+      sql.raw(`update door_commands set requested_at = now() - interval '${seconds} seconds'`),
+    )
+
+  it('hands a waiting command to the door service', async () => {
+    await ask('open-front')
+
+    expect((await drain()).commands).toEqual(['open-front'])
+  })
+
+  it('survives this process restarting, because it is a row and not an array', async () => {
+    await ask('open-front')
+
+    // A second app over the same database is what a redeploy looks like.
+    const redeployed = testClient(createHarness().app)
+    const body = await (
+      await redeployed.api.door.commands.$get({}, { headers: doorHeaders(harness) })
+    ).json()
+
+    expect(ok(body).commands).toEqual(['open-front'])
+  })
+
+  it('hands each command over exactly once', async () => {
+    await ask('open-front')
+
+    expect((await drain()).commands).toEqual(['open-front'])
+    expect((await drain()).commands).toEqual([])
+  })
+
+  it('refuses to run a command that waited out an outage', async () => {
+    await ask('unlock-front')
+    await age(600)
+
+    expect((await drain()).commands).toEqual([])
+  })
+
+  it('says in the door history that the command never ran', async () => {
+    await ask('unlock-front')
+    await age(600)
+    await drain()
+
+    const events = await harness.db
+      .select()
+      .from(doorEvents)
+      .where(eq(doorEvents.kind, 'door-command-expired'))
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        detail: expect.objectContaining({ command: 'unlock-front' }),
+      }),
+    ])
+  })
+
+  it('still runs a command that has only waited a moment', async () => {
+    await ask('open-front')
+    await age(30)
+
+    expect((await drain()).commands).toEqual(['open-front'])
+  })
+
+  it('keeps the order they were asked for', async () => {
+    await ask('open-front')
+    await ask('lock')
+
+    expect((await drain()).commands).toEqual(['open-front', 'lock'])
   })
 })

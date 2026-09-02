@@ -200,6 +200,32 @@ export const waivers = pgTable(
  * migrations/0001_table_comments.sql refuses both.
  * See decisions/0008-single-admin-plus-audit-log.md.
  */
+/**
+ * Door commands a member asked for, waiting for the door service to collect
+ * them.
+ *
+ * This was an array in the API process. Two things went wrong with that. A
+ * deploy dropped every waiting command while the audit log went on saying they
+ * had been queued, and a command that outlived an outage came back hours later
+ * and unlocked a door with nobody in the building. A row with a time on it
+ * fixes both: it survives a restart, and the drain refuses to hand over
+ * anything older than the window.
+ */
+export const doorCommands = pgTable(
+  'door_commands',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    command: text('command').notNull(),
+    requestedById: text('requested_by_id').references(() => user.id),
+    requestedAt: timestamp('requested_at', { withTimezone: true }).notNull().defaultNow(),
+    /** When the drain settled it, either way. Null means still waiting. */
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    /** 'sent' when the door service took it, 'expired' when it waited too long. */
+    resolution: text('resolution'),
+  },
+  (t) => [index('door_commands_waiting_idx').on(t.resolvedAt, t.requestedAt)],
+)
+
 export const auditLog = pgTable(
   'audit_log',
   {

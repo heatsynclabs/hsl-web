@@ -101,11 +101,28 @@ export async function signOut(): Promise<void> {
 /**
  * Returns better-auth's own sentence, which is the same whether or not the
  * address is on an account. Printing it as it comes keeps this screen from
- * telling somebody which emails exist. redirectTo is left off because this app
- * has no screen for the second half of the flow yet.
+ * telling somebody which emails exist.
  */
 export async function requestPasswordReset(email: string): Promise<string> {
-  const answer = await post('/request-password-reset', { email })
+  // redirectTo is where better-auth sends somebody after it has checked the
+  // token in the emailed link. It appends ?token= to this path, and
+  // ResetPasswordView reads it. Without it the link lands nowhere.
+  const answer = await post('/request-password-reset', {
+    email,
+    redirectTo: `${globalThis.location?.origin ?? ''}/reset-password`,
+  })
   const message = readRefusal(answer).message
   return message ?? 'If that address is on an account, a reset link is on its way.'
+}
+
+/**
+ * Sets a new password from the token in the emailed link.
+ *
+ * This is the second half of the reset. Without it the 31 imported members who
+ * have never had a password could ask for a link and then had nowhere to go.
+ * Read from dist/api/routes/password.mjs in better-auth 1.7.2: the endpoint is
+ * POST /reset-password and the body is { newPassword, token }.
+ */
+export async function resetPassword(token: string, newPassword: string): Promise<void> {
+  await post('/reset-password', { token, newPassword })
 }

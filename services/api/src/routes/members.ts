@@ -8,6 +8,11 @@ import type {
   PatchMemberRequest,
 } from '@hsl/schema'
 import {
+  session,
+  payments,
+  cards,
+  auditLog,
+  account,
   certifications,
   memberLevelLabel,
   patchMemberRequest,
@@ -39,6 +44,83 @@ import { paymentsFor } from './payments.ts'
  * rather than a new idea.
  */
 
+/**
+ * Whether a member row is one nobody has done anything with.
+ *
+ * Signup is open to the internet, so an account can be created by somebody who
+ * should not have one, and until now nothing could remove it. Deleting a real
+ * member is a different question with waivers and payment history behind it, so
+ * this only covers the case that needs covering: an account created and never
+ * used for anything.
+ *
+ * A member who has ever acted as an admin is also kept, because audit_log.actorId
+ * references them and the log outlives everybody in it.
+ */
+async function neverUsed(db: Database, memberId: string): Promise<string | null> {
+  const [member] = await db.select().from(user).where(eq(user.id, memberId)).limit(1)
+  if (member === undefined) return 'That member does not exist.'
+
+  if (member.orientation !== null) return 'That member has been oriented.'
+  if (member.admin || member.instructor || member.accountant) return 'That member holds a role.'
+  if ((member.memberLevel ?? 0) > 0) return 'That member has a dues tier set.'
+
+  const counts = await Promise.all([
+    db.select({ id: cards.id }).from(cards).where(eq(cards.userId, memberId)).limit(1),
+    db.select({ id: payments.id }).from(payments).where(eq(payments.userId, memberId)).limit(1),
+    db
+      .select({ id: userCertifications.id })
+      .from(userCertifications)
+      .where(eq(userCertifications.userId, memberId))
+      .limit(1),
+    db.select({ id: waivers.id }).from(waivers).where(eq(waivers.userId, memberId)).limit(1),
+    db.select({ id: auditLog.id }).from(auditLog).where(eq(auditLog.actorId, memberId)).limit(1),
+  ])
+
+  const names = ['a card', 'a payment', 'a certification', 'a signed release', 'audit history']
+  for (const [index, rows] of counts.entries()) {
+    if (rows.length > 0) return `That member has ${names[index]} on their record.`
+  }
+
+  return null
+}
+
+/**
+ * Removes an account nobody has used, or says why it was kept.
+ *
+ * The audit row is written before the member row goes and survives it:
+ * audit_log.targetId is plain text with no foreign key, exactly so the log can
+ * outlive what it describes.
+ */
+async function removeMember(
+  deps: AppDeps,
+  memberId: string,
+  actorId: string,
+): Promise<string | null> {
+  const kept = await neverUsed(deps.db, memberId)
+  if (kept !== null) {
+    return (
+      `${kept} An account with history is not removed, because the record belongs to the lab ` +
+      'as much as to the person. Hide them from the directory instead, or ask the board what ' +
+      'should happen to the record.'
+    )
+  }
+
+  const [member] = await deps.db.select().from(user).where(eq(user.id, memberId)).limit(1)
+
+  await recordAudit(deps.db, {
+    actorId,
+    action: 'member.remove',
+    targetId: memberId,
+    detail: { email: member?.email ?? null },
+  })
+
+  await deps.db.delete(account).where(eq(account.userId, memberId))
+  await deps.db.delete(session).where(eq(session.userId, memberId))
+  await deps.db.delete(user).where(eq(user.id, memberId))
+
+  return null
+}
+
 export function memberRoutes(deps: AppDeps) {
   const routes = new Hono<AppEnv>()
 
@@ -61,6 +143,11 @@ export function memberRoutes(deps: AppDeps) {
       if (member === null) return notFound(c)
 
       return c.json(await memberResponseFor(deps.db, member))
+    })
+    .delete('/api/members/:id', requireAdmin, async (c) => {
+      const kept = await removeMember(deps, c.req.param('id'), signedIn(c).id)
+      if (kept !== null) return c.json({ error: kept } satisfies ErrorResponse, 409)
+      return c.body(null, 204)
     })
     .patch('/api/members/:id', requireAdmin, jsonBody(patchMemberRequest), async (c) => {
       const member = await findMember(deps.db, c.req.param('id'))

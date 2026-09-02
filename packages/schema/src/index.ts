@@ -13,6 +13,7 @@ export {
   auditLog,
   cards,
   certifications,
+  doorCommands,
   doorEvents,
   payments,
   session,
@@ -33,6 +34,7 @@ export type NewPayment = typeof tables.payments.$inferInsert
 export type Waiver = typeof tables.waivers.$inferSelect
 export type AuditLogRow = typeof tables.auditLog.$inferSelect
 export type NewAuditLogRow = typeof tables.auditLog.$inferInsert
+export type DoorCommandRow = typeof tables.doorCommands.$inferSelect
 export type DoorEventRow = typeof tables.doorEvents.$inferSelect
 export type NewDoorEventRow = typeof tables.doorEvents.$inferInsert
 

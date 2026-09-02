@@ -30,6 +30,32 @@ const BCRYPT_COST = 10
 
 export type Auth = ReturnType<typeof createAuth>
 
+/**
+ * Chosen rather than defaulted. better-auth turns rate limiting on only in
+ * production and allows 100 requests per 10 seconds, which is generous
+ * enough to walk a password list against a known member address, and off
+ * entirely on a staging host.
+ *
+ * The window is per address in memory, so it resets when this process
+ * restarts and is not shared between instances. With one API container that
+ * is the whole story. A second container would need the storage option, and
+ * a limit at the proxy is worth having either way.
+ */
+    const RATE_LIMIT = {
+  enabled: true,
+  window: 60,
+  max: 120,
+  customRules: {
+    // Ten tries a minute is more than a person who has forgotten which of
+    // their two passwords it was, and far less than a list.
+    '/sign-in/email': { window: 60, max: 10 },
+    // Each one sends mail to somebody's inbox, so the limit is about them
+    // rather than about us.
+    '/request-password-reset': { window: 300, max: 3 },
+    '/reset-password': { window: 300, max: 10 },
+  },
+} as const
+
 export function createAuth(db: Database, config: Config, mailer: Mailer = createMailer(config)) {
   return betterAuth({
     appName: 'HeatSync Labs',
@@ -58,6 +84,7 @@ export function createAuth(db: Database, config: Config, mailer: Mailer = create
       // who reached the account keeps it until their cookie expires otherwise.
       revokeSessionsOnPasswordReset: true,
     },
+    rateLimit: RATE_LIMIT,
     advanced: {
       cookiePrefix: 'hsl',
       useSecureCookies: config.useSecureCookies,

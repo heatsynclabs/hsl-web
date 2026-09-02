@@ -5,11 +5,12 @@ import { useSession } from '@hsl/api-client'
 
 import DoorView from './views/DoorView.vue'
 import ForgotPasswordView from './views/ForgotPasswordView.vue'
+import ResetPasswordView from './views/ResetPasswordView.vue'
 import OverviewView from './views/OverviewView.vue'
 import SignInView from './views/SignInView.vue'
 
 /** Routes an anonymous visitor is allowed to see. Everything else needs a session. */
-const PUBLIC_ROUTES = new Set(['sign-in', 'forgot-password'])
+const PUBLIC_ROUTES = new Set(['sign-in', 'forgot-password', 'reset-password'])
 
 /**
  * A courtesy to the member, so nobody stares at a screen that was never going
@@ -34,6 +35,7 @@ export function createAppRouter(): Router {
       { path: '/door', name: 'door', component: DoorView },
       { path: '/sign-in', name: 'sign-in', component: SignInView },
       { path: '/forgot-password', name: 'forgot-password', component: ForgotPasswordView },
+      { path: '/reset-password', name: 'reset-password', component: ResetPasswordView },
       { path: '/:rest(.*)', redirect: '/' },
     ],
   })
