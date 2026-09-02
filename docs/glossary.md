@@ -26,8 +26,11 @@ log.
 
 ## Access
 
-**Card** A physical RFID token. The lab uses Wiegand-26 readers, so a card
-number is a hex string matched on the reader as `parseInt(number, 16) % 32767`.
+**Card** A physical RFID token. The lab uses Wiegand-26 readers. A card number is
+stored as a hex string and canonicalised to eight uppercase hex characters, which
+is the width the controller writes. The reader matches the full 32 bit value
+exactly. The `% 32767` figure that appears in older notes is a log encoding, not
+card matching, and applying it would match the wrong card.
 
 **Card slot** The position a card occupies in the door controller's EEPROM table,
 0 through 199. The legacy `cards.id` is the slot, and the import preserves it

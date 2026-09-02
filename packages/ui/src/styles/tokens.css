@@ -139,6 +139,7 @@
 [data-ground="page"] {
   --g-bg:      var(--char);
   --g-raised:  var(--slab);
+  --g-plate:   var(--grime);
   --g-line:    var(--steel);
   --g-line-hi: var(--steel-hi);
   --g-ink:     var(--bone);
@@ -151,6 +152,7 @@
 [data-ground="raised"] {
   --g-bg:      var(--slab);
   --g-raised:  var(--slab-hi);
+  --g-plate:   var(--grime);
   --g-line:    var(--steel);
   --g-line-hi: var(--steel-hi);
   --g-ink:     var(--bone);
@@ -165,6 +167,7 @@
 [data-ground="plate"] {
   --g-bg:      var(--tape-dark);
   --g-raised:  #201b16;
+  --g-plate:   var(--tape-dark);
   --g-line:    var(--on-dark-line);
   --g-line-hi: rgba(236, 227, 211, 0.4);
   --g-ink:     var(--on-dark);
@@ -178,6 +181,7 @@
 [data-ground="hazard"] {
   --g-bg:      var(--hazard);
   --g-raised:  #f8bf52;
+  --g-plate:   #f8bf52;
   --g-line:    rgba(20, 17, 13, 0.32);
   --g-line-hi: #14110d;
   --g-ink:     #14110d;

@@ -101,9 +101,11 @@ Everything the apps need and nothing speculative.
 | GET | `/api/door/status` | member | the last status the door service posted |
 | GET | `/space_api.json` | public | the payload the lab website and the status LED read |
 
-Two routes exist only for the door service and authenticate with a shared
+Three routes exist only for the door service and authenticate with a shared
 credential rather than a session: one to fetch the card table it should
-reconcile to, and one to post status and events back.
+reconcile to, one to post status and events back, and one to hand it the
+commands a member asked for while it was between passes. The door service names
+them in `services/door/src/link.ts`, since it is written first.
 
 ## The door adapter
 
