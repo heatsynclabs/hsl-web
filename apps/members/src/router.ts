@@ -13,6 +13,16 @@ import SignInView from './views/SignInView.vue'
 const PUBLIC_ROUTES = new Set(['sign-in', 'forgot-password', 'reset-password'])
 
 /**
+ * Public routes that a signed-in member is also allowed to stay on.
+ *
+ * Sending somebody who is already signed in to the overview is right for the
+ * sign in screen and wrong for a reset link: a member who remembered their old
+ * password and signed in before opening the email would be bounced off the one
+ * screen that can set the new one, with no way back to it.
+ */
+const PUBLIC_WHILE_SIGNED_IN = new Set(['reset-password'])
+
+/**
  * A courtesy to the member, so nobody stares at a screen that was never going
  * to load. The API is the rule and refuses anything this lets through, per
  * section 5 of CONTRIBUTING.md. main.ts resolves the session before
@@ -23,7 +33,9 @@ export function nextRoute(to: RouteLocationNormalizedGeneric): NavigationGuardRe
   const isPublic = PUBLIC_ROUTES.has(String(to.name))
 
   if (!signedIn && !isPublic) return { name: 'sign-in', query: { next: to.fullPath } }
-  if (signedIn && isPublic) return { name: 'overview' }
+  if (signedIn && isPublic && !PUBLIC_WHILE_SIGNED_IN.has(String(to.name))) {
+    return { name: 'overview' }
+  }
   return true
 }
 

@@ -45,3 +45,24 @@ describe('the router guard', () => {
     expect(nextRoute(target('door', '/door'))).toBe(true)
   })
 })
+
+/**
+ * A member who remembered their old password and signed in before opening the
+ * reset email was bounced off the one screen that can set the new one, with no
+ * way back to it.
+ */
+describe('a reset link opened while already signed in', () => {
+  it('stays on the reset screen rather than bouncing to the overview', async () => {
+    clearSession()
+    await loadSession(stubApi({ me: () => Promise.resolve(SAM_ME) }))
+
+    expect(nextRoute(target('reset-password', '/reset-password?token=abc'))).toBe(true)
+  })
+
+  it('still sends a signed in member away from the sign in screen', async () => {
+    clearSession()
+    await loadSession(stubApi({ me: () => Promise.resolve(SAM_ME) }))
+
+    expect(nextRoute(target('sign-in', '/sign-in'))).toEqual({ name: 'overview' })
+  })
+})

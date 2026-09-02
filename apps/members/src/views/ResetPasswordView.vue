@@ -1,30 +1,32 @@
 <template>
-  <LoginPanel title="Choose a password" :subtitle="subtitle">
-    <p v-if="linkProblem" class="reset__problem">
-      {{ linkProblem }}
-    </p>
-
-    <template v-else-if="done">
-      <p class="reset__done">
-        Your password is set and every other browser has been signed out. Sign in with it now.
+  <div class="reset">
+    <LoginPanel title="Choose a password" :subtitle="subtitle">
+      <p v-if="linkProblem" class="reset__problem">
+        {{ linkProblem }}
       </p>
-      <Button @click="goToSignIn">Sign in</Button>
-    </template>
 
-    <form v-else @submit.prevent="submit">
-      <Field
-        v-model="password"
-        label="New password"
-        type="password"
-        autocomplete="new-password"
-        :error="refusal ?? undefined"
-      />
-      <Note>At least eight characters. It replaces whatever the account had before.</Note>
-      <Button type="submit" :disabled="working">
-        {{ working ? 'Setting it' : 'Set password' }}
-      </Button>
-    </form>
-  </LoginPanel>
+      <template v-else-if="done">
+        <p class="reset__done">
+          Your password is set and every other browser has been signed out. Sign in with it now.
+        </p>
+        <Button @click="goToSignIn">Sign in</Button>
+      </template>
+
+      <form v-else @submit.prevent="submit">
+        <Field
+          v-model="password"
+          label="New password"
+          type="password"
+          autocomplete="new-password"
+          :error="refusal ?? undefined"
+        />
+        <Note>At least eight characters. It replaces whatever the account had before.</Note>
+        <Button type="submit" :disabled="working">
+          {{ working ? 'Setting it' : 'Set password' }}
+        </Button>
+      </form>
+    </LoginPanel>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -88,6 +90,16 @@ async function goToSignIn(): Promise<void> {
 </script>
 
 <style scoped>
+/* The same box the sign in screen puts round its panel. This screen can be
+   reached while signed in, so it sits inside the app frame rather than filling
+   the page, and without a width it stretches to whatever the window is. */
+.reset {
+  max-width: 420px;
+  margin: var(--space-8) auto;
+  border: var(--bd-2);
+  background: var(--g-raised);
+}
+
 .reset__problem,
 .reset__done {
   margin: 0 0 var(--space-4);
