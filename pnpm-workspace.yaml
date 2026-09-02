@@ -37,3 +37,11 @@ catalog:
 onlyBuiltDependencies:
   - esbuild
 
+
+# drizzle-kit pulls the deprecated @esbuild-kit packages, which pin esbuild
+# 0.18.20. GHSA-67mh-4wv8-2f99 lets any website reach esbuild's development
+# server. Nothing here starts that server, so the path is not reachable, but it
+# is a build tool that ends up in an image and the override costs nothing.
+# Remove this when drizzle-kit drops @esbuild-kit, which it does on the 1.0 line.
+overrides:
+  esbuild: '>=0.25.0'

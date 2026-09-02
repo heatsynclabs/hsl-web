@@ -13,23 +13,23 @@ runs on a laptop under Docker Compose, and `README.md` is the instructions.
 | Part | State | Proven by |
 |---|---|---|
 | `packages/schema` | built | 26 tests, 3 migrations applied to a real Postgres |
-| `packages/ui` | built | 16 tests, rendered in a browser |
+| `packages/ui` | built | 24 tests, rendered in a browser in both themes |
 | `packages/api-client` | built | 14 tests |
-| `services/api` | built | 161 tests against a real Postgres |
-| `services/door` | built, never spoken to hardware | 103 tests against a fake controller |
+| `services/api` | built | 182 tests against a real Postgres |
+| `services/door` | built, never spoken to hardware | 125 tests against a fake controller |
 | `apps/members` | built | 38 tests, walked through in a browser |
 | `apps/signup` | built | 33 tests, walked through in a browser |
-| `apps/admin` | built | 73 tests, walked through in a browser |
-| `tools/import` | built, run against the real dump | 23 tests, plus the run below |
+| `apps/admin` | built | 129 tests, walked through in a browser |
+| `tools/import` | built, run against the real dump | 23 tests, plus the run in section 2 |
 | Compose stack | runs | brought up from nothing, every URL answers |
 | Backup and restore | works | `tools/restore-drill.sh` passes, in CI |
-| Deployment | not started | no host exists yet, see section 4 |
+| Deployment | not started | no host exists yet, see section 5 |
 
-464 tests. Lint, typecheck and the voice check are clean across the repository.
+571 tests. Lint, typecheck and the voice check are clean.
 
-12,368 lines of TypeScript and Vue, and 6,055 lines of tests. The previous
-attempt was 50,941 lines and deployed nothing; the difference is almost entirely
-enforcement machinery that is not here on purpose.
+14,668 lines of TypeScript and Vue, 7,334 lines of tests, 22 routes, 10 ADRs.
+The previous attempt was 50,941 lines and deployed nothing; the difference is
+almost entirely enforcement machinery that is not here on purpose.
 
 ## 2. What has been proven against real data
 
@@ -42,122 +42,154 @@ got here.
   with card access, 10 certifications.
 - All 1,030 bcrypt hashes are byte identical between the two databases.
 - All 64 card slots come across unchanged, 14 through 200.
-- All 64 card numbers canonicalise to eight uppercase hex characters.
-- Every account row carries `providerId: credential`, `issuer:
-  local:credential`, and `accountId` equal to the member id, which is what
-  better-auth 1.7.2 filters on.
+- Every account row carries the three fields better-auth 1.7.2 filters on.
 - A real imported member signs in through the real API and reads their own
-  record: 110 payments, 4 certifications, card slot 14, level 50.
-- A member cannot read another member, cannot reach the directory without being
-  oriented, cannot change another member, cannot make themself an admin, cannot
-  open a door without card access, and cannot read the audit log. All six
-  refused, on real data.
+  record.
+- Six refusals hold on real data: a member cannot read another member, reach the
+  directory unoriented, change another member, make themself an admin, open a
+  door without card access, or read the audit log.
 
-## 3. Facts that overrule the older documents
+## 3. The audit, and what it found
+
+Eight reviewers went at the finished system from different angles: a volunteer
+at 2am with a door that will not open, a new contributor adding a feature, a
+security reviewer, a maintainer in 2029, an accessibility reviewer, somebody
+running a different hackerspace, a board member, and a senior engineer looking
+for unearned complexity. Every finding above minor was then given to a second
+agent told to refute it. Twelve survived.
+
+Fixed, each with a test watched failing first:
+
+1. **Two ways into the building.** The 2018 decision refusing a remote rear
+   unlock was enforced by comparing against the literal string `unlock-rear`,
+   and the sibling command `unlock` walked past it and released every door. The
+   Rails app being replaced has the same hole. The refusal is now a list in
+   `@hsl/schema` keyed by effect, read by both services.
+2. **A revoked card kept working.** Slot ownership was process memory that
+   started empty at boot, so a card revoked while the door service was down was
+   reported rather than cleared, forever. Ownership now comes from the database.
+3. **The lint gate had never run.** The root script was `pnpm -r lint` and no
+   package defines a `lint` script, so it printed a notice and exited zero. It
+   caught four real problems the moment it was connected.
+4. **`drizzle-kit generate` could not run.** Migration snapshot 0002 was a byte
+   copy of 0001, so two snapshots claimed the same parent. The next person to
+   change a table would have been stuck.
+5. **A door report with a bad clock pinned the status.** A timestamp years ahead
+   became the newest status permanently, and a future time is always inside the
+   staleness window, so every screen went on saying the door had just reported.
+   Clamped on write, and the read is bounded too, because `door_events` refuses
+   deletes by design and a poisoned row could not be removed through the
+   application.
+6. **Contrast.** The theme toggle border measured 1.38:1 and the focus ring on a
+   picked signup tier was amber drawn on amber. The wider contrast finding did
+   not reproduce: measured against rendered pixels rather than tokens, labels,
+   headers and notes are 5.30:1 in the light theme.
+7. **The 2am checklist** sent a volunteer to two commands that are no-ops on the
+   host they were standing on, and left out the Caddy log, which is the only one
+   that names which layer is down.
+8. **A vulnerable esbuild** arrived transitively through drizzle-kit's deprecated
+   `@esbuild-kit` packages. Not reachable here, since nothing starts esbuild's
+   development server, but overridden anyway.
+
+Confirmed and NOT fixed. These are real and they are the top of the next list:
+
+| What | Why it matters | Where |
+|---|---|---|
+| The door command queue is an array in the API process | A deploy silently drops commands the audit log records as queued, and a command queued before an outage could replay later as an unlock with nobody in the building | `services/api/src/routes/door.ts` |
+| Password reset has no completion screen | The link in the mail reaches a route the members app does not render. The 31 imported members with no password still cannot get in | `apps/members` |
+| A signup cannot be undone | No route deletes a member, so an account created by a stranger is permanent | `services/api/src/routes/signup.ts` |
+| Sign-in rate limiting is better-auth's default | It exists, but nothing here has chosen or tested a limit | `services/api/src/auth.ts` |
+| A fresh install cannot make its first admin | Nothing bootstraps an admin or seeds a tool list outside `seed.ts`, so another hackerspace cannot start | `services/api` |
+
+## 4. Facts that overrule the older documents
 
 `docs/legacy-system.md` has the full list with sources. The ones that changed
 the build:
 
 - **One card is in slot 200.** The firmware's `addUser` accepts it, `checkUser`
-  never reads it, and on an ATmega328 its bytes land on the alarm state. That
-  card does not open the door today even though the members database says it
-  does. The import reports it and preserves it; the door service refuses to
-  write it.
-- **Card matching is an exact 32 bit comparison.** The `% 32767` in the old
-  field manual is a log encoding. Applying it would match the wrong card.
+  never reads it, and on an ATmega328 its bytes land on the alarm state.
+- **Card matching is an exact 32 bit comparison.** The `% 32767` in the old field
+  manual is the encoding the event log splits a tag with, and nothing else.
+  `services/door/src/domain/reads.ts` uses it for exactly that, which is what
+  makes card enrolment work.
 - **Production is Postgres 8.4.20 on CentOS 6.8**, not 9.x.
-- **There are no duplicate emails.** The merge step in the old plan is not
-  needed.
+- **There are no duplicate emails.** The merge step in the old plan is not needed.
 - **Dues are 25, 50 and 100.** The 20, 35 and 80 figures do not match the data.
-- **`member_level` maps to labels** exactly as `app/models/user.rb` does, and
-  `paymentStatus` is the 60 day rule from the same file.
+- **`member_level` maps to labels** exactly as `app/models/user.rb` does.
 
-## 4. Decisions somebody has to make
+## 5. Decisions somebody has to make
 
-These block deployment, not development. None of them is technical.
+These block deployment, not development. None is technical.
 
 1. **Which machine runs this.** `hsl-web` is 32 bit CentOS 6.8 on kernel 2.6.32
-   and cannot run Docker at all. Until a host is named and owned, the Compose
-   stack has nowhere to go. This is the single biggest risk to the project.
+   and cannot run Docker at all. This is the single biggest risk to the project.
 2. **Whether the board sanctions this rewrite.** A recorded position from
-   2026-05-17 in the Slack export says the lab "already decided to not go with
-   yet another bespoke one-off platform". Nobody has confirmed a board decision
-   either way.
+   2026-05-17 says the lab "already decided to not go with yet another bespoke
+   one-off platform". Nobody has confirmed a board position either way.
 3. **Sign-off on dropping two-admin approval**, recorded in
-   `docs/decisions/0008-single-admin-plus-audit-log.md`. The mockups promised it
-   in member-facing copy; the apps now say what the system actually does.
-4. **An SMTP account.** Password reset is the only way in for the 31 members
-   with no password hash. The API refuses to start on https without it.
-5. **Waiver retention and the under-18 path.** No legal input yet. The signup
-   app records acceptance and points at the paper release rather than replacing
-   it, which is the conservative reading.
+   `docs/decisions/0008-single-admin-plus-audit-log.md`.
+4. **An SMTP account.** The API refuses to start on https without one.
+5. **Waiver retention and the under-18 path.** No legal input yet.
+6. **Whether `open-rear` is covered by the 2018 decision.** It pulses the strike
+   for five seconds rather than holding the door open, so it is deliberately
+   allowed. If the board reads the decision the other way it is one line in
+   `REFUSED_DOOR_COMMANDS` and the refusal takes effect in both services.
 
-## 5. Unknowns that need somebody at the lab
+## 6. Unknowns that need somebody at the lab
 
-Nobody has been in front of the controller. Each of these is a five minute job
-with LAN access and each one changes code.
+Nobody has been in front of the controller. Each is a five minute job with LAN
+access and each one changes code.
 
 1. **Dump the card table with `?a`.** Confirms whether slot 200 is really on the
-   device, and whether tags are stored upper or lower case. The reconcile loop
-   assumes uppercase and says so.
+   device, and whether tags are stored upper or lower case.
 2. **Which physical door is controller door 1.** Getting it wrong opens the
-   wrong door. `o1` and `u=1` are assumed to be the front.
-3. **Whether the deployed firmware is the DEBUG build.** If it is not,
-   `dumpUser` prints asterisks instead of tags and readback verification is
-   impossible.
+   wrong door.
+3. **Whether the deployed firmware is the DEBUG build.** If not, `dumpUser`
+   prints asterisks and readback verification is impossible.
 4. **The live `PRIVPASSWORD`, controller IP and MAC.** The committed `0x1234` is
    the public example value.
-5. **Whether `user_certifications` holds a duplicate pair.** No unique
-   constraint was added, because section 13 forbids one that rejects existing
-   data, and nobody has checked.
+5. **Whether `user_certifications` holds a duplicate pair.** No unique constraint
+   was added because section 13 forbids one that rejects existing data.
 
-## 6. Known gaps in what is built
+## 7. Known gaps in what is built
 
-Honest list. None of these is hidden in the code.
+Beyond section 3. None of these is hidden in the code.
 
 - The door service has never spoken to real hardware. Every test runs against a
   fake that speaks the same wire protocol through the same codec.
 - The API image is 487 MB because `pnpm deploy --prod` keeps a workspace
   dependency's own devDependencies. Roughly 110 MB of build tooling ships and
-  never runs. Fixing it properly means bundling the service to one file.
-- There is no password reset completion screen. The link in the mail reaches a
-  route the members app does not render yet.
+  never runs.
 - The members app posts to the three better-auth endpoints directly rather than
-  using `better-auth/vue`, because the package is not a dependency of that app.
-  The call sites name the file and line each path was read from.
-- The Recent list on the door screen only shows what that browser did since the
-  screen opened. There is no member-facing door event route.
+  using `better-auth/vue`, which is not a dependency of that app. The call sites
+  name the file and line each path was read from.
 - `packages/ui` has no multi-line input, so the two free text profile fields use
   single line ones.
-- No deploy workflow. Deployment is four lines by hand in
-  `docs/operations.md`, which is the right amount until a second person needs to
-  do it.
+- The admin suites render with `renderToString` and cannot click, because no DOM
+  environment is installed. Interaction is covered by rendering each state and by
+  pure functions.
+- No deploy workflow. Deployment is four lines by hand in `docs/operations.md`.
 
-## 7. Open licence questions
+## 8. Open licence questions
 
-Read from the source files, not assumed. In `ATTRIBUTIONS.md` with detail.
+Read from the source files, not assumed. `ATTRIBUTIONS.md` has the detail.
 
-- **`Open_Access_Control_Ethernet` has no licence at all.** No LICENSE file, no
-  statement in any source file. The door service reimplements its wire protocol,
-  which is ordinarily fine for interoperability, but the lab should put a
-  licence on its own firmware.
-- **GANTRY has no declared licence.** `new-hsl` has no licence file and no
-  `license` field. The tokens and all 29 marks in `packages/ui` came from it.
-- **The Rails app is CC BY 3.0**, which is a content licence rather than a
-  software one. This system reimplements its schema, its member level mapping
-  and its payment status rule, and credits it.
-- This repository declares Apache 2.0 in `package.json` and has no LICENSE file.
+- **`Open_Access_Control_Ethernet` has no licence at all.** The lab should put
+  one on its own firmware.
+- **GANTRY has no declared licence.** The tokens and all 29 marks came from it.
+- **The Rails app is CC BY 3.0**, a content licence rather than a software one.
+- This repository declares Apache 2.0 and has no LICENSE file.
 
-## 8. If you are picking this up
+## 9. If you are picking this up
 
-Read in this order: `README.md`, then `CONTRIBUTING.md`, then
-`docs/architecture.md`, then `docs/legacy-system.md`. The decisions in
-`docs/decisions/` explain why things are the way they are, each with the one
-condition that would flip it.
+Read in this order: `README.md`, `CONTRIBUTING.md`, `docs/architecture.md`,
+`docs/legacy-system.md`. The ADRs explain why things are the way they are, each
+with the one condition that would flip it. `docs/build-an-app.md` is for anybody
+adding something members sign in to.
 
-Then run it. `make up && make seed` takes a few minutes and the thing you end up
+Then run it. `make up && make seed` takes a few minutes and what you end up
 looking at is the actual system.
 
 The previous three attempts died on the members side, not the door. The members
-side is built and works. What is left is a machine to run it on and a decision
-to run it.
+side is built, audited, and works. What is left is a machine to run it on and a
+decision to run it.
