@@ -18,6 +18,7 @@ interface Lab {
   deps: LoopDependencies
   device: FakeDevice
   databaseCards: CardTableRow[]
+  issuedSlots: number[]
   queuedCommands: string[]
   reports: Array<{ events: Array<{ kind: string; detail?: Record<string, unknown> }> }>
   cardWrites(): string[]
@@ -33,9 +34,17 @@ function lab(controllerCards: CardTableRow[] = []): Lab {
   const queuedCommands: string[] = []
   const reports: Lab['reports'] = []
 
+  // Every slot the members database has a row for, active or not, which is what
+  // the real API sends. A revoked card leaves `cards` but stays here.
+  const issuedSlots: number[] = []
+
   const api = new Hono()
   api.get(CARD_TABLE_PATH, (context) =>
-    context.json({ generatedAt: new Date().toISOString(), cards: databaseCards }),
+    context.json({
+      generatedAt: new Date().toISOString(),
+      cards: databaseCards,
+      ownedSlots: issuedSlots,
+    }),
   )
   api.get(COMMANDS_PATH, (context) => context.json({ commands: queuedCommands.splice(0) }))
   api.post(REPORT_PATH, async (context) => {
@@ -59,6 +68,7 @@ function lab(controllerCards: CardTableRow[] = []): Lab {
     },
     device,
     databaseCards,
+    issuedSlots,
     queuedCommands,
     reports,
     cardWrites: () => device.requests.filter((request) => request.startsWith('?m')),
@@ -190,3 +200,41 @@ describe('the reconcile loop', () => {
 function kinds(target: Lab): string[] {
   return target.reports.flatMap((report) => report.events.map((event) => event.kind))
 }
+
+/**
+ * Revoking a card has to survive a restart of this service.
+ *
+ * Ownership used to be a set in process memory that started empty at boot. A
+ * card revoked while the door service was down had left the write list and was
+ * no longer owned, so the first pass after the restart reported it instead of
+ * clearing it, and nothing ever cleared it afterwards. The fob went on opening
+ * the door for as long as the controller held it.
+ */
+describe('a card revoked while this service was down', () => {
+  it('is cleared off the controller on the first pass after a restart', async () => {
+    // The controller holds the card. The database still has the row, because a
+    // revoked card keeps its slot, but it is no longer one to write.
+    const space = lab([{ slot: 41, cardNumber: '0000A1B2', permissions: 1 }])
+    space.issuedSlots.push(41)
+
+    // A fresh process: nothing has been written by this instance yet.
+    expect(space.deps.ownedSlots.size).toBe(0)
+
+    await runPass(space.deps)
+
+    expect(space.device.cards.has(41)).toBe(false)
+  })
+
+  it('still refuses to clear a slot this system never issued', async () => {
+    // Somebody wrote a card straight to the controller. It belongs to a
+    // decision nobody recorded, so it is reported rather than removed.
+    const space = lab([{ slot: 60, cardNumber: '0000C4D9', permissions: 1 }])
+
+    await runPass(space.deps)
+
+    expect(space.device.cards.has(60)).toBe(true)
+    expect(space.reports[0]?.events.map((event) => event.kind)).toContain(
+      'card-on-controller-not-in-database',
+    )
+  })
+})

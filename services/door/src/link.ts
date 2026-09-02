@@ -37,6 +37,9 @@ const cardTableRow = z.object({
 const cardTableEnvelope = z.object({
   generatedAt: z.string(),
   cards: z.array(z.unknown()),
+  // Optional so a door service can run against an API that predates it. An
+  // absent list means no slot is owned, which reports rather than clears.
+  ownedSlots: z.array(z.number().int()).optional(),
 })
 
 const pendingCommands = z.object({
@@ -47,6 +50,12 @@ const pendingCommands = z.object({
 export interface CardTable {
   generatedAt: string
   cards: CardTableRow[]
+  /**
+   * Every slot the members database has a card row for, active or not. This is
+   * what makes clearing a revoked card safe across a restart. See the field on
+   * cardTableResponse in @hsl/schema.
+   */
+  ownedSlots: number[]
   /** Rows the API sent that this service could not read. Reported, not guessed at. */
   unreadableRows: number
 }
@@ -70,6 +79,32 @@ export interface ApiLinkOptions {
   fetchImpl?: typeof fetch
 }
 
+type ApiCall = (path: string, init?: RequestInit) => Promise<unknown>
+
+/**
+ * The card table, with the rows this service cannot read counted rather than
+ * guessed at. A row it cannot parse is one card that will not open the door,
+ * and saying how many is more use than a stack trace.
+ */
+async function readCardTable(call: ApiCall): Promise<CardTable> {
+  const envelope = cardTableEnvelope.parse(await call(CARD_TABLE_PATH))
+  const cards: CardTableRow[] = []
+  let unreadableRows = 0
+
+  for (const row of envelope.cards) {
+    const parsed = cardTableRow.safeParse(row)
+    if (parsed.success) cards.push(parsed.data)
+    else unreadableRows += 1
+  }
+
+  return {
+    generatedAt: envelope.generatedAt,
+    cards,
+    ownedSlots: envelope.ownedSlots ?? [],
+    unreadableRows,
+  }
+}
+
 export function createApiLink(options: ApiLinkOptions): ApiLink {
   const call = async (path: string, init?: RequestInit): Promise<unknown> => {
     const send = options.fetchImpl ?? fetch
@@ -91,17 +126,7 @@ export function createApiLink(options: ApiLinkOptions): ApiLink {
   }
 
   return {
-    async fetchCardTable(): Promise<CardTable> {
-      const envelope = cardTableEnvelope.parse(await call(CARD_TABLE_PATH))
-      const cards: CardTableRow[] = []
-      let unreadableRows = 0
-      for (const row of envelope.cards) {
-        const parsed = cardTableRow.safeParse(row)
-        if (parsed.success) cards.push(parsed.data)
-        else unreadableRows += 1
-      }
-      return { generatedAt: envelope.generatedAt, cards, unreadableRows }
-    },
+    fetchCardTable: () => readCardTable(call),
 
     async fetchCommands(): Promise<PendingWork> {
       const pending = pendingCommands.parse(await call(COMMANDS_PATH))

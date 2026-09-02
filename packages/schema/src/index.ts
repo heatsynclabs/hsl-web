@@ -125,6 +125,7 @@ export {
   cardPermissions,
   CARD_SLOT_COUNT,
   cardTableResponse,
+  REFUSED_DOOR_COMMANDS,
   doorCommand,
   CARD_PRESENTED,
   cardPresentedDetail,

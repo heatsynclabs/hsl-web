@@ -41,6 +41,14 @@ export interface LoopDependencies {
  */
 export async function runReconcilePass(deps: LoopDependencies): Promise<ReconcilePlan> {
   const table = await deps.link.fetchCardTable()
+
+  // Ownership comes from the database rather than from what this process
+  // remembers writing. The set used to start empty at boot, so a card revoked
+  // while the service was down stayed on the controller with nothing that would
+  // ever remove it, and the fob went on opening the door.
+  for (const slot of table.ownedSlots) {
+    if (isUsableSlot(slot)) deps.ownedSlots.add(slot)
+  }
   for (const card of table.cards) {
     if (isUsableSlot(card.slot)) deps.ownedSlots.add(card.slot)
   }

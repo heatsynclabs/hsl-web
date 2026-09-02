@@ -7,7 +7,7 @@ import {
   otherTheme,
   storedTheme,
   THEME_STORAGE_KEY,
-} from './theme.ts'
+} from './theme'
 
 /**
  * Storage is the part worth testing. A browser set to block site data throws

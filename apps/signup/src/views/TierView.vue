@@ -107,7 +107,9 @@ async function send(): Promise<void> {
 }
 
 .tier__radio:focus-visible + .tier__dues {
-  outline: 2px solid var(--hazard);
+  /* currentColor, not the accent: on a picked tier the fill is already the
+     accent and an amber ring on amber measures 1.0:1. */
+  outline: 2px solid currentColor;
   outline-offset: 3px;
 }
 

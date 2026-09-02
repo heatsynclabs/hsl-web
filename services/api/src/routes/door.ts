@@ -7,7 +7,6 @@ import type {
   DoorStatusResponse,
   SyncResponse,
   ErrorResponse,
-  SyncCard,
 } from '@hsl/schema'
 import {
   cards,
@@ -16,6 +15,7 @@ import {
   doorReportRequest,
   doorStatus,
   LAST_USABLE_CARD_SLOT,
+  REFUSED_DOOR_COMMANDS,
   user,
 } from '@hsl/schema'
 import { and, asc, desc, eq, lte } from 'drizzle-orm'
@@ -40,6 +40,13 @@ import { jsonBody } from '../middleware/validate.ts'
  * decisions/0005-the-door-service-is-outbound-only.md.
  */
 
+/**
+ * How far ahead of this server a reported time may be before it is treated as
+ * wrong. The door service and the API keep their own clocks and neither is
+ * synchronised to the other, so a little drift is ordinary.
+ */
+const CLOCK_SKEW_SECONDS = 120
+
 /** The kind that marks a door_events row as a status snapshot rather than an event. */
 const STATUS_EVENT_KIND = 'status'
 
@@ -48,7 +55,7 @@ const STATUS_EVENT_KIND = 'status'
  * application's, not the controller's, so it holds whatever hardware is
  * underneath and however the door service is rewritten.
  */
-const REFUSED_COMMAND: DoorCommand = 'unlock-rear'
+
 
 interface QueuedCommand {
   command: DoorCommand
@@ -83,10 +90,19 @@ export interface LatestDoorStatus {
 
 /** The newest status the door service posted, or nulls when it has never posted. */
 export async function latestDoorStatus(db: Database): Promise<LatestDoorStatus> {
+  // Bounded on both sides. recordReport clamps what it writes, but a row from
+  // before that existed, or written straight into the table, would still win on
+  // `at desc` forever, and door_events refuses deletes by design so it could not
+  // be removed through the application.
   const rows = await db
     .select()
     .from(doorEvents)
-    .where(eq(doorEvents.kind, STATUS_EVENT_KIND))
+    .where(
+      and(
+        eq(doorEvents.kind, STATUS_EVENT_KIND),
+        lte(doorEvents.at, new Date(Date.now() + CLOCK_SKEW_SECONDS * 1000)),
+      ),
+    )
     .orderBy(desc(doorEvents.at))
     .limit(1)
 
@@ -151,13 +167,6 @@ async function readStatus(deps: AppDeps): Promise<DoorStatusResponse> {
 }
 
 /**
- * How far ahead of this server a reported time may be before it is treated as
- * wrong. The door service and the API keep their own clocks and neither is
- * synchronised to the other, so a little drift is ordinary.
- */
-const CLOCK_SKEW_SECONDS = 120
-
-/**
  * A time this server is willing to believe.
  *
  * Without this, one report with a timestamp years ahead wins "the newest
@@ -219,7 +228,10 @@ export function doorRoutes(deps: AppDeps) {
       const { command } = c.req.valid('json')
       const actorId = signedIn(c).id
 
-      if (command === REFUSED_COMMAND) return refuseRearUnlock(deps, c, actorId)
+      const refusal = REFUSED_DOOR_COMMANDS[command]
+      if (refusal !== undefined) {
+        return refuseByLabDecision(deps, c, { actorId, command, reason: refusal })
+      }
 
       const result = await queueCommand(deps, queue, actorId, command)
       if (result.status === 503) return refuse(c, 503, result.reason)
@@ -227,9 +239,10 @@ export function doorRoutes(deps: AppDeps) {
     })
     .get('/api/door/status', requireMember, async (c) => c.json(await readStatus(deps)))
     .get('/api/door/card-table', doorCredential(deps.config), async (c) => {
-      const body: { generatedAt: string; cards: SyncCard[] } = {
+      const body = {
         generatedAt: new Date().toISOString(),
         cards: await reconcilableCards(deps.db),
+        ownedSlots: await issuedSlots(deps.db),
       }
       return c.json(body)
     })
@@ -255,19 +268,19 @@ export function doorRoutes(deps: AppDeps) {
  * The refusal from 2018-02-22, recorded as well as returned: an attempt to
  * unlock the rear door remotely is worth seeing on the audit screen.
  */
-async function refuseRearUnlock(deps: AppDeps, c: Context<AppEnv>, actorId: string) {
+async function refuseByLabDecision(
+  deps: AppDeps,
+  c: Context<AppEnv>,
+  refused: { actorId: string; command: DoorCommand; reason: string },
+) {
   await recordAudit(deps.db, {
-    actorId,
+    actorId: refused.actorId,
     action: 'door.control.refused',
     targetId: null,
-    detail: { command: REFUSED_COMMAND },
+    detail: { command: refused.command },
   })
 
-  return refuse(
-    c,
-    403,
-    'Unlocking the rear door remotely is refused by the lab decision of 2018-02-22. The command was not sent. Someone in the building has to open it.',
-  )
+  return refuse(c, 403, refused.reason)
 }
 
 /**
@@ -281,6 +294,16 @@ async function refuseRearUnlock(deps: AppDeps, c: Context<AppEnv>, actorId: stri
  * round, from holding a card with permission 1, so a card whose member has lost
  * access stays in the database and stops being written to the device.
  */
+/**
+ * Every slot this system has issued a card for, active or not. A revoked card
+ * leaves reconcilableCards but stays here, which is what lets the door service
+ * clear it off the controller instead of reporting it and leaving it working.
+ */
+async function issuedSlots(db: Database): Promise<number[]> {
+  const rows = await db.select({ slot: cards.id }).from(cards).orderBy(asc(cards.id))
+  return rows.map((row) => row.slot)
+}
+
 async function reconcilableCards(db: Database) {
   return db
     .select({

@@ -44,7 +44,10 @@
 
   --bone:        #ece3d3;
   --ash:         #a79d8c;
-  --smoke:       #756c5e;
+  /* Lightened from #756c5e, which measured 3.09:1 against --slab. This is the
+     ink on every form label, table header and helper note, so it carries real
+     words rather than decoration and needs 4.5:1. */
+  --smoke:       #988f81;
 
   --hazard:      #f2ab1e;
   --hazard-deep: #c98714;

@@ -97,6 +97,21 @@ export type DoorCommand = z.infer<typeof doorCommand>
 export const cardTableResponse = z.object({
   generatedAt: z.iso.datetime(),
   cards: z.array(syncCard),
+  /**
+   * Every slot the members database has a card row for, active or not.
+   *
+   * This is what makes a clear safe, and it has to come from the database
+   * rather than from what the door service remembers writing. It used to be
+   * process memory that started empty at boot, so revoking a card and then
+   * restarting the service left the card on the controller with nothing that
+   * would ever remove it: the row had left the write list, and the slot was no
+   * longer owned, so the pass reported it instead of clearing it and the fob
+   * went on opening the door.
+   *
+   * A slot absent from here is a slot nobody in this system issued, and that is
+   * still reported rather than cleared.
+   */
+  ownedSlots: z.array(storedCardSlot),
 })
 
 /**
@@ -131,6 +146,36 @@ export const doorReportRequest = z.object({
 export const doorReportResponse = z.object({
   eventsRecorded: z.int().min(0),
 })
+
+/**
+ * Commands refused by the lab decision of 2018-02-22, and why.
+ *
+ * The decision is that the rear door may not be held unlocked from a phone. The
+ * list is here, in the package both services read, because it was previously
+ * written out twice and the two copies had already drifted: each refused only
+ * the literal "unlock-rear" while `unlock` walked straight past and unlocked
+ * every door, which is the exact thing the decision forbids. The Rails app it
+ * replaces has the same hole, so reproducing its behaviour faithfully would
+ * have reproduced the hole.
+ *
+ * `open-rear` is deliberately NOT here. Open pulses the strike for five seconds
+ * and somebody has to be standing at the door to use it. Unlock holds the door
+ * open until something locks it again, which is what the decision is about. If
+ * the board reads it the other way, add 'open-rear' to this object and the
+ * refusal takes effect in both services at once.
+ *
+ * The API refusal is the rule, and it is what a member sees. The door service
+ * checks the same list again because it is the only thing that can reach the
+ * controller, and a refusal that close to the hardware is worth the repetition.
+ */
+export const REFUSED_DOOR_COMMANDS: Partial<Record<DoorCommand, string>> = {
+  'unlock-rear':
+    'Holding the rear door unlocked is refused by the lab decision of 2018-02-22. Nothing was ' +
+    'sent to the controller. Somebody in the building can open that door.',
+  unlock:
+    'Unlocking every door holds the rear door open, which the lab decision of 2018-02-22 ' +
+    'refuses. Nothing was sent to the controller. Unlock the front door instead.',
+}
 
 /**
  * The one abstraction in the codebase. Policy lives above it, never inside it,

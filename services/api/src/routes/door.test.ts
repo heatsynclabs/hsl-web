@@ -1,4 +1,4 @@
-import { auditLog, CARD_SLOT_COUNT } from '@hsl/schema'
+import { auditLog, CARD_SLOT_COUNT, type DoorCommand } from '@hsl/schema'
 import { testClient } from 'hono/testing'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
@@ -334,5 +334,76 @@ describeDatabase('a door report with a clock that is wrong', () => {
 
     const latest = await latestDoorStatus(harness.db)
     expect(latest.reportedAt!.toISOString()).toBe(earlier)
+  })
+})
+
+/**
+ * The lab decision of 2018-02-22 is that the rear door may not be held unlocked
+ * from a phone. It was enforced by comparing against the single literal string
+ * "unlock-rear", and the sibling command "unlock" walked straight past it and
+ * unlocked every door, which is the exact thing the decision forbids.
+ *
+ * The Rails app being replaced has the same hole, so reproducing its behaviour
+ * faithfully reproduced the hole. These tests are about the effect of a command
+ * rather than its name.
+ */
+describeDatabase('the 2018 rear door decision', () => {
+  const harness: Harness = createHarness()
+  const client = testClient(harness.app)
+
+  let holder: SignedInMember
+
+  beforeEach(async () => {
+    await harness.reset()
+    holder = await addMember(harness, { cardAccess: true })
+    await reportDoorStatus(harness)
+  })
+
+  afterAll(async () => {
+    await harness.close()
+  })
+
+  const send = async (command: DoorCommand) =>
+    await client.api.door.control.$post({ json: { command } }, { headers: holder.headers })
+
+  it('refuses unlock-rear, which names the rear door outright', async () => {
+    expect((await send('unlock-rear')).status).toBe(403)
+  })
+
+  it('refuses unlock, which holds every door open including the rear', async () => {
+    const response = await send('unlock')
+
+    expect(response.status).toBe(403)
+    expect(await response.json()).toMatchObject({ error: expect.stringContaining('2018-02-22') })
+  })
+
+  it('tells a member unlocking the front is the thing they can do', async () => {
+    const body = await (await send('unlock')).json()
+
+    expect(body).toMatchObject({ error: expect.stringContaining('Unlock the front door instead') })
+  })
+
+  it('still allows the commands the decision does not cover', async () => {
+    const allowed: DoorCommand[] = [
+      'open-front',
+      'unlock-front',
+      'lock',
+      'lock-rear',
+      'arm',
+      'disarm',
+    ]
+
+    for (const command of allowed) {
+      expect((await send(command)).status, `${command} should be allowed`).toBe(202)
+    }
+  })
+
+  it('records a refusal in the audit log, so an attempt is visible', async () => {
+    await send('unlock')
+
+    const rows = await harness.db.select().from(auditLog)
+    expect(rows).toEqual([
+      expect.objectContaining({ action: 'door.control.refused', detail: { command: 'unlock' } }),
+    ])
   })
 })

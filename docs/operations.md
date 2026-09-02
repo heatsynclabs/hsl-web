@@ -130,13 +130,30 @@ Physical cards still open the door when everything here is down, because the
 controller holds its own card table. If cards are not working, the problem is the
 controller or the readers, and nothing in this repository will fix it.
 
+On the public host:
+
 ```
-docker compose ps                       # what is running
-docker compose logs -f api              # the API
-docker compose logs -f door             # on the lab host
-curl -s https://<domain>/space_api.json # the public status contract
-curl -s http://localhost:8080/healthz   # the door service, from the lab host
+docker compose ps                        # what is running, and what keeps restarting
+docker compose logs -f web               # Caddy. This is the one that names the failure.
+docker compose logs -f api
+curl -s https://<domain>/space_api.json  # the public status contract
 ```
+
+Start with the Caddy log. It is the only one that says which layer is down: a
+line reading `dial tcp 172.21.0.4:3000: connect: connection refused` means the
+API is not answering, and you have the answer before you have opened anything
+else. It redacts the Cookie and Authorization headers, so it is safe to paste
+into a chat while you ask for help.
+
+On the lab host, which is a different machine:
+
+```
+docker compose logs -f door
+curl -s http://localhost:8080/healthz
+```
+
+Running the door commands on the public host prints nothing and looks like a
+broken door service. There is no door container there.
 
 If the door service cannot reach the API, remote control returns 503 and the card
 table goes stale. The building stays usable. This is the designed failure and it

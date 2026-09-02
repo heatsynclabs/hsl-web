@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto'
 
-import { doorControlRequest, type DoorCommand } from '@hsl/schema'
+import { doorControlRequest, REFUSED_DOOR_COMMANDS, type DoorCommand } from '@hsl/schema'
 import { Hono, type MiddlewareHandler } from 'hono'
 
 import type { DoorAdapter } from './adapters/types.ts'
@@ -18,16 +18,12 @@ export interface AppOptions {
 }
 
 /**
- * Rear unlock is refused by the lab decision of 2018-02-22. The refusal lives
- * here rather than in the adapter so it holds whatever hardware is underneath.
- * The API refuses it too, so a member sees a sentence instead of a service they
- * cannot reach answering 403; this is the last refusal before the hardware.
+ * The refusals from the lab decision of 2018-02-22, read from @hsl/schema so
+ * there is one list rather than a copy here that can drift from the API's. This
+ * is the last refusal before the hardware: policy lives above the adapter, so it
+ * holds whatever controller is underneath.
  */
-export const REFUSED_COMMANDS: Partial<Record<DoorCommand, string>> = {
-  'unlock-rear':
-    'Holding the rear door unlocked is refused by the lab decision of 2018-02-22. Nothing was ' +
-    'sent to the controller. Use open-rear to pulse the strike instead.',
-}
+export const REFUSED_COMMANDS = REFUSED_DOOR_COMMANDS
 
 const COMMAND_ACTIONS: Record<DoorCommand, (controller: DoorAdapter) => Promise<void>> = {
   'open-front': (controller) => controller.open('front'),

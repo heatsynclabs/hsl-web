@@ -59,7 +59,10 @@ function toggle(): void {
   gap: var(--space-2);
   min-height: var(--tap);
   padding: 0 var(--space-3);
-  border: 2px solid var(--g-line);
+  /* --g-line is a hairline at 16 percent and measures 1.38:1 against the app
+     bar, well under the 3:1 a control boundary needs. Every other control in
+     the system uses the solid one. */
+  border: 2px solid var(--g-line-hi);
   background: transparent;
   color: var(--g-ink-2);
   font-family: var(--font-ui);

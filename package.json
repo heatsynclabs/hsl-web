@@ -13,7 +13,7 @@
     "build": "pnpm -r build",
     "test": "pnpm --filter @hsl/schema build && pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "lint": "pnpm -r lint && node tools/voice-check.mjs",
+    "lint": "eslint . --no-warn-ignored && node tools/voice-check.mjs",
     "check": "pnpm lint && pnpm typecheck && pnpm test",
     "dev": "pnpm --filter @hsl/schema build && docker compose up -d db api mail && pnpm -r --parallel dev",
     "db:generate": "pnpm --filter @hsl/schema db:generate",
