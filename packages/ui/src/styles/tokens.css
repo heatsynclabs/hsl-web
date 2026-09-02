@@ -459,3 +459,20 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ============================================================
+   10. RESET
+   Added here rather than taken from the brand pack. Without
+   border-box, min-height on a control applies to its content box and
+   the padding and border are added on top, so every 44px tap target
+   rendered 70px tall and every full width input overflowed its card.
+   ============================================================ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}

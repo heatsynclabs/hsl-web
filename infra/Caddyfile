@@ -1,6 +1,7 @@
-{
-	email {$HSL_ACME_EMAIL}
-}
+# No global options block. Caddy issues and renews certificates without an ACME
+# account email, and an `email` directive that resolves to an empty string stops
+# the whole server from parsing its config. If the lab wants expiry warnings,
+# add `{ email someone@heatsynclabs.org }` here as its own change.
 
 (spa) {
 	root * {args[0]}

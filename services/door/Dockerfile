@@ -7,7 +7,9 @@ WORKDIR /repo
 FROM base AS build
 COPY . .
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
-RUN pnpm --filter @hsl/door build
+# ...^... builds @hsl/schema first, because the services import its emitted
+# JavaScript rather than its TypeScript source. See packages/schema/package.json.
+RUN pnpm --filter @hsl/door^... build && pnpm --filter @hsl/door build
 # --legacy because this workspace does not inject workspace packages. Note that
 # --prod does not drop a workspace dependency's own devDependencies, so the
 # runtime image carries about 110 MB of build tooling it never runs. See

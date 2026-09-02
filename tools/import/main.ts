@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+
 import { assertSnapshotComplete, beginReadOnly, countLegacy, readLegacy } from './legacy.ts'
 import type { LegacyCounts, LegacySnapshot } from './legacy.ts'
 import { load } from './load.ts'
@@ -31,6 +33,22 @@ const USAGE = `Usage: node --experimental-strip-types tools/import/main.ts [opti
 
   LEGACY_DATABASE_URL   the Rails database, opened read only
   DATABASE_URL          the members database this writes into`
+
+/**
+ * Compose mounts the database password as a file rather than putting it in the
+ * environment, so a URL with no password picks it up from NAME_PASSWORD_FILE.
+ * A password already in the URL wins, which is how this runs from a shell.
+ */
+function withMountedPassword(url: string, name: string): string {
+  const path = process.env[`${name}_PASSWORD_FILE`]
+  if (url === '' || path === undefined) return url
+
+  const parsed = new URL(url)
+  if (parsed.password !== '') return url
+
+  parsed.password = readFileSync(path, 'utf8').trim()
+  return parsed.toString()
+}
 
 export function parseArguments(argv: readonly string[]): Options | 'usage' {
   const options: Options = { dryRun: false, acceptOrphans: false }
@@ -150,8 +168,8 @@ function readInvocation(): { options: Options; legacyUrl: string; targetUrl: str
     return null
   }
 
-  const legacyUrl = process.env.LEGACY_DATABASE_URL ?? ''
-  const targetUrl = process.env.DATABASE_URL ?? ''
+  const legacyUrl = withMountedPassword(process.env.LEGACY_DATABASE_URL ?? '', 'LEGACY_DATABASE')
+  const targetUrl = withMountedPassword(process.env.DATABASE_URL ?? '', 'DATABASE')
 
   if (legacyUrl === '' || targetUrl === '') {
     throw new Error(`Set LEGACY_DATABASE_URL and DATABASE_URL.\n\n${USAGE}`)

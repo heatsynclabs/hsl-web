@@ -18,14 +18,31 @@ development.
 ```
 git clone https://github.com/heatsynclabs/hsl-web
 cd hsl-web
-cp .env.example .env        # set HSL_DOMAIN, HSL_SCHEME, HSL_ACME_EMAIL
+cp .env.example .env
 make secrets                # writes secrets/, never overwrites an existing file
 make up
 ```
 
+Edit `.env` before `make up`. For a real deployment that means
+`HSL_PUBLIC_ORIGIN=https://members.heatsynclabs.org`, `HSL_DOMAIN` to match
+without the scheme, `HSL_SCHEME=https`, and the ports back to 80 and 443.
+
+`HSL_PUBLIC_ORIGIN` has to be the exact URL a browser types, port and all. The
+session cookie is checked against it, so a mismatch refuses every sign in with
+"invalid origin" and nothing in the logs says why.
+
+Then put the real SMTP URL in `secrets/smtp_url`. `make secrets` writes a
+placeholder pointing at the development mail catcher, and the API refuses to
+start on https while it is still that, because password reset is the only way in
+for a member with no password.
+
 `make up` is `docker compose up -d --build`. Compose refuses to start when a
 value in `.env` is missing, so a misconfigured host fails at
 `docker compose config` with a readable message rather than at runtime.
+
+Migrations run as their own container that the API waits on. Two API containers
+can never race to migrate, and a failed migration stops the deploy rather than
+leaving a service running against a half migrated schema.
 
 ## The lab host
 
@@ -51,12 +68,17 @@ problem.
 cp .env.example .env
 echo 'COMPOSE_FILE=compose.yaml:compose.dev.yaml' >> .env
 make secrets
-docker compose up -d db api
+docker compose up -d db api mail
 pnpm dev
 ```
 
-Postgres is on `127.0.0.1:5432`, the API on `127.0.0.1:3000`, and Vite serves
-each app with its own proxy pointing `/api` at the API.
+Postgres is on `127.0.0.1:5432`, the API on `127.0.0.1:3000`, the mail catcher's
+inbox on `127.0.0.1:8026`, and Vite serves each app with its own proxy pointing
+`/api` at the API.
+
+To run the built apps behind Caddy instead, which is what production does, leave
+`COMPOSE_FILE` out and use `make up`. `README.md` covers that path and the seed
+data that goes with it.
 
 The override file is named `compose.dev.yaml` rather than
 `compose.override.yaml` on purpose. An override file merges automatically, so a
@@ -122,9 +144,9 @@ is not urgent.
 
 ## Secrets
 
-Three on the public host: the database password, the session signing key, and the
-door token. One on the lab host: the controller password, plus the same door
-token.
+Four on the public host: the database password, the session signing key, the
+door token and the SMTP URL. One on the lab host: the controller password, plus
+the same door token.
 
 They live as files under `secrets/`, mounted at `/run/secrets/`, which keeps them
 out of the process environment and out of `docker inspect`. `secrets/` is
@@ -138,6 +160,7 @@ costs:
 | Session signing key | Everyone is signed out. Generate a new one. |
 | Database password | Recoverable from inside the container. |
 | Door token | The two hosts stop talking. Rotate on both. |
+| SMTP URL | Password reset mail stops. Nobody who forgets a password can get back in. |
 | Controller password | Read it from the firmware, or reflash. Rotating it means changing `PRIVPASSWORD` in the firmware and the secret file together. |
 
 No secret here has the property that losing it makes data permanently unreadable.

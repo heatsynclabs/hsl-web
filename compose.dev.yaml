@@ -1,28 +1,22 @@
-# Development. Postgres and the API on localhost, apps run from Vite on the host
-# with its own proxy. No reverse proxy, so no local TLS to fight.
+# Development, where the apps run from Vite on the host with hot reload and only
+# the database, the API and the mail catcher run in Docker.
 #
-#   cp .env.example .env
-#   docker compose up -d db api
+#   docker compose up -d db api mail
 #   pnpm dev
+#
+# For the whole stack in Docker instead, including the built apps behind Caddy,
+# use compose.yaml on its own. See README.md.
 
 services:
   db:
     ports:
-      - "127.0.0.1:5432:5432"
+      - '127.0.0.1:5432:5432'
 
   api:
     ports:
-      - "127.0.0.1:3000:3000"
+      - '127.0.0.1:3000:3000'
     environment:
       NODE_ENV: development
-      SMTP_URL: smtp://mail:1025
-
-  # Catches every message the API sends. Read them at http://localhost:8025.
-  mail:
-    image: axllent/mailpit:v1.28
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:8025:8025"
 
   web:
-    profiles: ["proxy"]
+    profiles: ['proxy']

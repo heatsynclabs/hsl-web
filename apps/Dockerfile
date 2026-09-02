@@ -9,7 +9,9 @@ WORKDIR /repo
 FROM base AS build
 COPY . .
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
-RUN pnpm --filter "./apps/*" build
+# The apps import the schema package at runtime through @hsl/api-client, so its
+# emitted JavaScript has to exist before Vite resolves it.
+RUN pnpm --filter @hsl/schema build && pnpm --filter "./apps/*" build
 
 FROM caddy:2.11.4-alpine AS runtime
 COPY infra/Caddyfile /etc/caddy/Caddyfile
