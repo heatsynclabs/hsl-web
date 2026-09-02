@@ -20,8 +20,16 @@
 
       <Note v-if="assigned" class="door-screen__assigned">
         Card {{ assigned.cardNumber }} went to slot {{ slotText(assigned.slot) }} for
-        {{ assigned.memberName }}. The card table is pushed on the next pass, so the card opens
-        the front door within about a minute rather than the moment you pressed the button.
+        {{ assigned.memberName }}.
+        <template v-if="assigned.memberHasCardAccess">
+          The card table is pushed on the next pass, so the card opens the front door within
+          about a minute rather than the moment you pressed the button.
+        </template>
+        <template v-else>
+          It will not open the door yet: {{ assigned.memberName }} does not have card access, so
+          the card is never written to the controller. Turn card access on for them in the
+          directory, and the next pass writes it.
+        </template>
       </Note>
     </LoadState>
   </Card>
@@ -144,7 +152,12 @@ const {
 const picked = ref<string | null>(null)
 const assigning = ref(false)
 const assignError = ref<ApiError | null>(null)
-const assigned = ref<{ cardNumber: string; slot: number; memberName: string } | null>(null)
+const assigned = ref<{
+  cardNumber: string
+  slot: number
+  memberName: string
+  memberHasCardAccess: boolean
+} | null>(null)
 
 const busySlot = ref<number | null>(null)
 const deactivateError = ref<ApiError | null>(null)
@@ -183,6 +196,7 @@ async function assign(request: PostCardRequest): Promise<void> {
       cardNumber: answer.card.cardNumber,
       slot: answer.card.slot,
       memberName: nameOf(request.userId),
+      memberHasCardAccess: answer.memberHasCardAccess,
     }
     picked.value = null
     await Promise.all([refreshQueue(), refreshTable()])

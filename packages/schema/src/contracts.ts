@@ -220,6 +220,14 @@ export const patchCardRequest = z.strictObject({
 
 export const cardResponse = z.object({
   card: cardRecord,
+  /**
+   * Whether the member this card belongs to may open doors at all.
+   *
+   * A card assigned to a member without card access takes a slot and never
+   * reaches the controller, so the screen has to be able to say so rather than
+   * reporting a success that does nothing. Admin only, because this route is.
+   */
+  memberHasCardAccess: z.boolean(),
 })
 
 // GET /api/certifications

@@ -85,6 +85,12 @@ async function assignCard(
     }
   }
 
+  const [holder] = await deps.db
+    .select({ cardAccess: user.cardAccess })
+    .from(user)
+    .where(eq(user.id, request.userId))
+    .limit(1)
+
   const assigned = await assignLowestFreeSlot(deps.db, request)
   if (assigned === null) {
     return {
@@ -102,7 +108,7 @@ async function assignCard(
     detail: { slot: assigned.id, permissions: assigned.permissions },
   })
 
-  return { card: { card: cardView(assigned) } }
+  return { card: { card: cardView(assigned), memberHasCardAccess: holder?.cardAccess ?? false } }
 }
 
 /** Relabels, deactivates or reassigns a card. Never moves it to another slot. */
@@ -137,7 +143,7 @@ async function updateCard(
     detail: { slot: card.id, ...request },
   })
 
-  return { card: { card: cardView(card) } }
+  return { card: { card: cardView(card), memberHasCardAccess: await hasCardAccess(deps.db, card.userId) } }
 }
 
 export function cardRoutes(deps: AppDeps) {
@@ -189,6 +195,15 @@ async function assignLowestFreeSlot(
 
     return inserted[0] ?? null
   })
+}
+
+async function hasCardAccess(db: Database, memberId: string): Promise<boolean> {
+  const rows = await db
+    .select({ cardAccess: user.cardAccess })
+    .from(user)
+    .where(eq(user.id, memberId))
+    .limit(1)
+  return rows[0]?.cardAccess ?? false
 }
 
 async function memberExists(db: Database, memberId: string): Promise<boolean> {

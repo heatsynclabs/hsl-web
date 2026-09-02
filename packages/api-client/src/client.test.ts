@@ -54,7 +54,7 @@ describe('a call that works', () => {
     }
     const fetched = vi.fn(async (_url: string, init?: RequestInit) => {
       sent = init
-      return answer(201, { card })
+      return answer(201, { card, memberHasCardAccess: true })
     })
     vi.stubGlobal('fetch', fetched)
 
