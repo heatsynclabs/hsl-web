@@ -14,6 +14,10 @@ FROM node:24.20-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=build /out /app
+# The public status document. Baked in rather than mounted, so there is no host
+# path that can be missing and leave the lab website reading a fallback.
+COPY infra/space_api.template.json /app/space_api.template.json
+ENV SPACE_API_TEMPLATE_PATH=/app/space_api.template.json
 USER node
 EXPOSE 3000
 CMD ["node", "dist/main.js"]

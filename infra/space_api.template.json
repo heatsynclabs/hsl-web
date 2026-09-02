@@ -1,0 +1,42 @@
+{
+  "api": "0.12",
+  "space": "HeatSync Labs",
+  "logo": "http://intranet.heatsynclabs.org/hsllogo.png",
+  "lat": 33.415346,
+  "lon": -111.835594,
+  "icon": {
+    "open": "http://intranet.heatsynclabs.org/open.png",
+    "closed": "http://intranet.heatsynclabs.org/closed.png"
+  },
+  "url": "http://www.heatsynclabs.org",
+  "address": "108 West Main Street, Mesa, AZ, USA 85281",
+  "contact": {
+    "phone": "",
+    "irc": "irc://irc.freenode.net/#heatsynclabs",
+    "twitter": "@heatsynclabs",
+    "ml": "http://groups.google.com/group/heatsynclabs"
+  },
+  "cam": [
+    "http://live.heatsynclabs.org"
+  ],
+  "feeds": [
+    {
+      "name": "Blog",
+      "url": "http://www.heatsynclabs.org/feed/"
+    },
+    {
+      "name": "Photos",
+      "url": "http://api.flickr.com/services/feeds/photos_public.gne?id=60827818@N07&amp;lang=en-us&amp;format=rss_200"
+    }
+  ],
+  "apis": {
+    "oac": {
+      "url": "http://intranet.heatsynclabs.org/cgi-bin/access.rb",
+      "description": "https://github.com/heatsynclabs/Open-Source-Access-Control-Web-Interface"
+    },
+    "pamela": {
+      "url": "http://members.heatsynclabs.org/macs.json",
+      "description": "https://github.com/heatsynclabs/Open-Source-Access-Control-Web-Interface"
+    }
+  }
+}
