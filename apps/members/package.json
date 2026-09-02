@@ -13,6 +13,7 @@
     "@hsl/api-client": "workspace:*",
     "@hsl/schema": "workspace:*",
     "@hsl/ui": "workspace:*",
+    "better-auth": "catalog:",
     "vue": "catalog:",
     "vue-router": "catalog:",
     "zod": "catalog:"
@@ -21,6 +22,7 @@
     "@vitejs/plugin-vue": "catalog:",
     "@vue/test-utils": "catalog:",
     "@vue/tsconfig": "catalog:",
+    "jsdom": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:",
     "vitest": "catalog:",

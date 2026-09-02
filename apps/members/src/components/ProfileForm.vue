@@ -7,8 +7,8 @@
       <Field v-model="draft.emergencyName" label="Emergency contact" />
       <Field v-model="draft.emergencyPhone" label="Emergency phone" type="tel" />
       <Field v-model="draft.emergencyEmail" label="Emergency email" type="email" />
-      <Field v-model="draft.currentSkills" label="Skills you have" />
-      <Field v-model="draft.desiredSkills" label="Skills you want" />
+      <Field v-model="draft.currentSkills" label="Skills you have" :rows="4" />
+      <Field v-model="draft.desiredSkills" label="Skills you want" :rows="4" />
 
       <fieldset class="profile-form__toggles">
         <legend class="profile-form__legend">Who can see this</legend>

@@ -188,3 +188,14 @@ That was deliberate.
 The images pin `node:24.20-alpine`. Node 26 does not bundle corepack, so when the
 base image moves, `RUN corepack enable` in each Dockerfile becomes
 `RUN npm i -g pnpm@<the version in package.json>`.
+
+## What is in the images
+
+Each service image is `node:24.20-alpine` plus one self-contained file per entry
+point, and no `node_modules` at all. The API image is 240 MB, of which 231 MB is
+the base image and 6.9 MB is `/app`. The door image is 232 MB on the same base.
+
+`pnpm bundle` in each service is what builds those files, and
+`docs/decisions/0013-services-ship-as-a-bundle.md` records why it replaced
+`pnpm deploy`. A stack trace from production therefore points into a bundled
+file. Rebuild the same commit to get the same bundle and the same line numbers.

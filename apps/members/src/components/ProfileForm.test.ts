@@ -1,6 +1,7 @@
-import { renderToString } from '@vue/test-utils'
+import { mount, renderToString } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 
+import { attached, click } from '../test-support/interact.ts'
 import { SAM } from '../test-fixtures'
 import ProfileForm from './ProfileForm.vue'
 
@@ -49,5 +50,37 @@ describe('the profile form', () => {
     const html = await render()
 
     expect(html).toContain('set by an admin and are recorded in the audit log')
+  })
+})
+
+/**
+ * What a member can do and what they want to learn is a paragraph, not a line.
+ * Both boxes were single line until packages/ui grew a multi-line one.
+ */
+describe('the profile form, filled in', () => {
+  it('gives the two skills questions room for more than a line', () => {
+    const wrapper = mount(ProfileForm, { ...attached, props: { member: SAM } })
+
+    expect(wrapper.findAll('textarea')).toHaveLength(2)
+  })
+
+  it('keeps the line breaks a member typed', async () => {
+    const wrapper = mount(ProfileForm, { ...attached, props: { member: SAM } })
+
+    await wrapper.findAll('textarea')[0]!.setValue('Laser cutter\nMIG welding')
+    await click(wrapper, 'Save changes')
+
+    expect(wrapper.emitted('save')?.[0]?.[0]).toMatchObject({
+      currentSkills: 'Laser cutter\nMIG welding',
+    })
+  })
+
+  it('clears a field the member emptied, rather than saving an empty string', async () => {
+    const wrapper = mount(ProfileForm, { ...attached, props: { member: SAM } })
+
+    await wrapper.findAll('textarea')[1]!.setValue('   ')
+    await click(wrapper, 'Save changes')
+
+    expect(wrapper.emitted('save')?.[0]?.[0]).toMatchObject({ desiredSkills: null })
   })
 })

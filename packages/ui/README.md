@@ -14,7 +14,7 @@ fetch, and it holds no business rule.
 | `ButtonRow` | Buttons side by side, sharing the width evenly |
 | `Card` | Bordered block on the raised ground, with an eyebrow and a title above the slot |
 | `DataTable` | Rows and columns from props, with a plain empty state when there are none |
-| `Field` | A label wired to one input by `for` and `id`, plus the error message wiring |
+| `Field` | A label wired to one box by `for` and `id`, plus the error message wiring. `rows` above one makes it a text area |
 | `KeyValue` | Two column list of labels and values, where a value may carry pills |
 | `Link` | Small uppercase text link in the accent ink |
 | `LoginPanel` | Centred mark, title, subtitle and a slot for the sign in form |
@@ -51,7 +51,13 @@ after the column key:
 
 `Field` takes `v-model` and an `error` string. Passing an error sets
 `aria-invalid` on the input and points `aria-describedby` at the message, so a
-screen reader reads the reason with the field rather than after it.
+screen reader reads the reason with the field rather than after it. Give it
+`:rows` above one and the box is a text area instead, for the fields that hold a
+paragraph:
+
+```vue
+<Field v-model="skills" label="Skills you have" :rows="4" />
+```
 
 ## Testing it
 
@@ -64,16 +70,16 @@ The suites render components and assert on the markup a person would notice: a
 disabled button carries `disabled` and drops its `href`, a table with no rows
 prints its empty text, a field label points at its own input.
 
-They render with `renderToString` from `@vue/test-utils` rather than `mount`,
-because neither `jsdom` nor `happy-dom` is installed in this workspace and
-Vitest 4 treats both as optional peers. Adding one of them to the catalog would
-let the same suites move to `mount` and add real click and typing tests.
+Suites that only read markup use `renderToString`, which is faster and says
+plainly that nothing is being clicked. Suites that assert on an interaction, such
+as typing into a multi-line `Field`, use `mount` under jsdom. See
+`docs/decisions/0011-a-dom-for-the-vue-suites.md`.
 
 ## What it depends on
 
-`vue` as a peer. `@vitejs/plugin-vue`, `vitest`, `@vue/test-utils`, `typescript`
-and `vue-tsc` to develop with, all pinned in the workspace catalog. It imports
-nothing else in this repository.
+`vue` as a peer. `@vitejs/plugin-vue`, `vitest`, `@vue/test-utils`, `jsdom`,
+`typescript` and `vue-tsc` to develop with, all pinned in the workspace catalog.
+It imports nothing else in this repository.
 
 ## Marks
 

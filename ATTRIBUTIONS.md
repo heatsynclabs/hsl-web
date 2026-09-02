@@ -21,7 +21,7 @@ the lockfile changes.
 
 ## Direct dependencies
 
-The 24 packages named in a `package.json` in this workspace. Versions are the
+The 28 packages named in a `package.json` in this workspace. Versions are the
 ones installed, and every shared version is pinned once in the
 `pnpm-workspace.yaml` catalog.
 
@@ -35,14 +35,18 @@ ones installed, and every shared version is pinned once in the
 | `@vitejs/plugin-vue` | 6.0.8 | MIT | Single file component compilation |
 | `vite` | 8.2.2 | MIT | Dev server and app builds |
 | `vitest` | 4.1.11 | MIT | Test runner everywhere |
+| `jsdom` | 30.0.1 | MIT | The DOM the Vue suites click in, per ADR 0011 |
+| `esbuild` | 0.28.2 | MIT | Bundles each service to one file for its image, per ADR 0013 |
 | `hono` | 4.13.5 | MIT | HTTP framework for the API and the door service |
 | `@hono/node-server` | 2.1.1 | MIT | Node adapter under Hono |
 | `@hono/zod-validator` | 0.9.1 | MIT | Validates requests against the shared schemas |
 | `zod` | 4.5.4 | MIT | Request and response schemas in `packages/schema` |
-| `better-auth` | 1.7.2 | MIT | Sessions and accounts inside the API service |
+| `better-auth` | 1.7.2 | MIT | Sessions and accounts inside the API service, and its own client in the members app, per ADR 0012 |
 | `bcryptjs` | 3.0.2 | BSD-3-Clause | Verifies the legacy password hashes, per ADR 0004 |
 | `drizzle-orm` | 0.45.2 | Apache-2.0 | Tables and queries |
 | `drizzle-kit` | 0.31.10 | MIT | Generates the migrations, per ADR 0006 |
+| `nodemailer` | 9.1.1 | MIT | Sends the password reset mail from the API |
+| `@types/nodemailer` | 8.0.1 | MIT | Types for the mailer |
 | `pg` | 8.23.0 | MIT | Postgres driver. Also the only dependency of `tools/import`, which resolves it from `services/api` |
 | `@types/pg` | 8.15.6 | MIT | Types for the driver |
 | `typescript` | 6.0.3 | Apache-2.0 | The language, pinned by ADR 0009 |

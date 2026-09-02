@@ -1,6 +1,7 @@
-import { renderToString } from '@vue/test-utils'
+import { mount, renderToString } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 
+import { attached, click, fill, isDisabled } from '../test-support/interact.ts'
 import { memberSelf } from '../test-fixtures.ts'
 import MemberRolesForm from './MemberRolesForm.vue'
 
@@ -32,5 +33,65 @@ describe('MemberRolesForm', () => {
     const html = await renderToString(MemberRolesForm, { props: { ...base, member: memberSelf } })
 
     expect(html).toContain('Nothing on this form has changed yet.')
+  })
+})
+
+/**
+ * Making somebody an admin. The form sends only what changed, so a save that
+ * carried the untouched fields as well would overwrite a change another admin
+ * made between the page loading and the button being pressed.
+ */
+describe('MemberRolesForm, filled in', () => {
+  function form() {
+    return mount(MemberRolesForm, { ...attached, props: { ...base, member: memberSelf } })
+  }
+
+  it('will not save until something on it has changed', () => {
+    const wrapper = form()
+
+    expect(isDisabled(wrapper, 'Save roles and level')).toBe(true)
+    expect(wrapper.text()).toContain('Nothing on this form has changed yet')
+  })
+
+  it('makes a member an admin, and sends nothing it was not asked to change', async () => {
+    const wrapper = form()
+
+    await fill(wrapper, 'Admin', true)
+    await click(wrapper, 'Save roles and level')
+
+    expect(wrapper.emitted('save')).toEqual([[{ admin: true }]])
+  })
+
+  it('never sends card access, which is a building key with its own control', async () => {
+    const wrapper = form()
+
+    await fill(wrapper, 'Instructor', true)
+    await fill(wrapper, 'Member level', '100')
+    await click(wrapper, 'Save roles and level')
+
+    const sent = wrapper.emitted('save')?.[0]?.[0]
+    expect(sent).toEqual({ instructor: true, memberLevel: 100 })
+    expect(sent).not.toHaveProperty('cardAccess')
+  })
+
+  it('takes a role away again, rather than only ever adding one', async () => {
+    const wrapper = mount(MemberRolesForm, {
+      ...attached,
+      props: { ...base, member: { ...memberSelf, instructor: true } },
+    })
+
+    await fill(wrapper, 'Instructor', false)
+    await click(wrapper, 'Save roles and level')
+
+    expect(wrapper.emitted('save')).toEqual([[{ instructor: false }]])
+  })
+
+  it('goes quiet again when a change is put back the way it was', async () => {
+    const wrapper = form()
+
+    await fill(wrapper, 'Admin', true)
+    await fill(wrapper, 'Admin', false)
+
+    expect(isDisabled(wrapper, 'Save roles and level')).toBe(true)
   })
 })

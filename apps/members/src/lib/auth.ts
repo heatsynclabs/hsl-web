@@ -1,21 +1,22 @@
+import { createAuthClient } from 'better-auth/vue'
+
 /**
  * Sign in, sign out and password reset. These are better-auth's own routes,
  * mounted at /api/auth by services/api/src/app.ts, and @hsl/api-client
  * deliberately does not carry them.
  *
- * better-auth ships a Vue client at its `better-auth/vue` export and that is
- * what should be here. It is not a dependency of this app, so it does not
- * resolve, and adding one is outside what this change may touch. The three
- * paths and their bodies below were read from the installed better-auth 1.7.2
- * sources rather than from memory:
- *   dist/api/routes/sign-in.mjs        /sign-in/email  { email, password }
- *   dist/api/routes/sign-out.mjs       /sign-out
- *   dist/api/routes/password.mjs       /request-password-reset  { email, redirectTo }
- * A refusal comes back as the better-call APIError body, { message, code },
- * with the HTTP status.
+ * The client is better-auth's own, so the paths and body shapes are the
+ * library's to keep true rather than ours. Read from the installed better-auth
+ * 1.7.2 sources: dist/client/config.mjs defaults baseURL to /api/auth on this
+ * origin and sends credentials, which is what Caddy serving one origin makes
+ * possible.
+ *
+ * The functions below exist because the client answers in two shapes and the
+ * screens should read one. A refusal comes back as a value,
+ * { data: null, error: { status, statusText, message, code } }, and a request
+ * that never reached the server throws. Both leave here as an AuthError.
  */
-
-const BASE_PATH = '/api/auth'
+const client = createAuthClient()
 
 /** better-auth answers 401 with this code when either the email or the password is wrong. */
 const INVALID_CREDENTIALS = 'INVALID_EMAIL_OR_PASSWORD'
@@ -34,39 +35,23 @@ export class AuthError extends Error {
   }
 }
 
-interface Refusal {
-  message: string | null
-  code: string | null
+interface Answer {
+  data: unknown
+  error: { status?: number; message?: string; code?: string } | null
 }
 
-function readRefusal(body: unknown): Refusal {
-  if (typeof body !== 'object' || body === null) return { message: null, code: null }
-  const fields = body as Record<string, unknown>
-  return {
-    message: typeof fields['message'] === 'string' ? fields['message'] : null,
-    code: typeof fields['code'] === 'string' ? fields['code'] : null,
+function explain(status: number, message: string | undefined, code: string | undefined): string {
+  if (code === INVALID_CREDENTIALS) {
+    return 'That email and password do not match an account. You are not signed in. Check both, or use the password reset link.'
   }
+  const said = message === undefined || message === '' ? '' : ` ${message}.`
+  return `The request was refused with ${status}.${said} Nothing was changed. Try again, and tell an admin if it keeps happening.`
 }
 
-async function readJson(response: Response): Promise<unknown> {
-  const text = await response.text()
-  if (text === '') return null
+async function answered(call: Promise<Answer>): Promise<unknown> {
+  let answer: Answer
   try {
-    return JSON.parse(text)
-  } catch {
-    return text
-  }
-}
-
-async function post(path: string, body: Record<string, unknown>): Promise<unknown> {
-  let response: Response
-  try {
-    response = await globalThis.fetch(BASE_PATH + path, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    })
+    answer = await call
   } catch {
     throw new AuthError(
       'The sign in service did not answer. Nothing was sent. Check that this browser is on a network that can reach the site, then try again.',
@@ -75,27 +60,25 @@ async function post(path: string, body: Record<string, unknown>): Promise<unknow
     )
   }
 
-  const answer = await readJson(response)
-  if (response.ok) return answer
+  if (answer.error === null) return answer.data
 
-  const refusal = readRefusal(answer)
-  throw new AuthError(explain(response.status, refusal), response.status, refusal.code)
+  const status = answer.error.status ?? 0
+  throw new AuthError(explain(status, answer.error.message, answer.error.code), status, answer.error.code ?? null)
 }
 
-function explain(status: number, refusal: Refusal): string {
-  if (refusal.code === INVALID_CREDENTIALS) {
-    return 'That email and password do not match an account. You are not signed in. Check both, or use the password reset link.'
-  }
-  const said = refusal.message === null ? '' : ` ${refusal.message}.`
-  return `The request was refused with ${status}.${said} Nothing was changed. Try again, and tell an admin if it keeps happening.`
+/** The message better-auth put in a body, when it put one there. */
+function messageIn(body: unknown): string | null {
+  if (typeof body !== 'object' || body === null) return null
+  const said = (body as Record<string, unknown>)['message']
+  return typeof said === 'string' ? said : null
 }
 
 export async function signIn(email: string, password: string): Promise<void> {
-  await post('/sign-in/email', { email, password })
+  await answered(client.signIn.email({ email, password }))
 }
 
 export async function signOut(): Promise<void> {
-  await post('/sign-out', {})
+  await answered(client.signOut())
 }
 
 /**
@@ -107,12 +90,14 @@ export async function requestPasswordReset(email: string): Promise<string> {
   // redirectTo is where better-auth sends somebody after it has checked the
   // token in the emailed link. It appends ?token= to this path, and
   // ResetPasswordView reads it. Without it the link lands nowhere.
-  const answer = await post('/request-password-reset', {
-    email,
-    redirectTo: `${globalThis.location?.origin ?? ''}/reset-password`,
-  })
-  const message = readRefusal(answer).message
-  return message ?? 'If that address is on an account, a reset link is on its way.'
+  const answer = await answered(
+    client.requestPasswordReset({
+      email,
+      redirectTo: `${globalThis.location?.origin ?? ''}/reset-password`,
+    }),
+  )
+
+  return messageIn(answer) ?? 'If that address is on an account, a reset link is on its way.'
 }
 
 /**
@@ -120,9 +105,7 @@ export async function requestPasswordReset(email: string): Promise<string> {
  *
  * This is the second half of the reset. Without it the 31 imported members who
  * have never had a password could ask for a link and then had nowhere to go.
- * Read from dist/api/routes/password.mjs in better-auth 1.7.2: the endpoint is
- * POST /reset-password and the body is { newPassword, token }.
  */
 export async function resetPassword(token: string, newPassword: string): Promise<void> {
-  await post('/reset-password', { token, newPassword })
+  await answered(client.resetPassword({ token, newPassword }))
 }

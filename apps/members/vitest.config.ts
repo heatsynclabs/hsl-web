@@ -2,14 +2,15 @@ import vue from '@vitejs/plugin-vue'
 import { defineConfig } from 'vitest/config'
 
 /**
- * Neither jsdom nor happy-dom is in the workspace catalog, so the suites render
- * with renderToString from @vue/test-utils rather than mount. A component that
- * has to be asserted after a request therefore awaits that request in setup,
- * which the server renderer resolves before it renders.
+ * jsdom so a suite can click. Suites that only read markup still use
+ * renderToString, which says plainly that nothing is being interacted with.
+ * See docs/decisions/0011-a-dom-for-the-vue-suites.md.
  */
 export default defineConfig({
   plugins: [vue()],
   test: {
     include: ['src/**/*.test.ts'],
+    environment: 'jsdom',
+    setupFiles: ['./src/test-support/setup.ts'],
   },
 })

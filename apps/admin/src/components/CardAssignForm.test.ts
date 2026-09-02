@@ -1,7 +1,8 @@
 import { ApiError } from '@hsl/api-client'
-import { renderToString } from '@vue/test-utils'
+import { mount, renderToString } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 
+import { attached, click, fill, optionLabels } from '../test-support/interact.ts'
 import { directoryEntries } from '../test-fixtures.ts'
 import CardAssignForm from './CardAssignForm.vue'
 
@@ -92,5 +93,78 @@ describe('CardAssignForm', () => {
     const html = await renderToString(CardAssignForm, { props: { ...base, members: thousand } })
 
     expect(html).toContain('1061 members match')
+  })
+})
+
+/**
+ * Assigning a card takes a slot on a physical controller and gives somebody a
+ * way into the building. The form picks the member, the question names them,
+ * and nothing is sent until the question is answered.
+ */
+describe('CardAssignForm, filled in', () => {
+  function form() {
+    return mount(CardAssignForm, { ...attached, props: { ...base, members: directoryEntries } })
+  }
+
+  it('reviews before assigning, so picking a member sends nothing', async () => {
+    const wrapper = form()
+
+    await fill(wrapper, 'Member', 'mbr_volkov')
+    await click(wrapper, 'Review')
+
+    expect(wrapper.emitted('assign')).toBeUndefined()
+    expect(wrapper.text()).toContain('Give card 0004B1C7 to M. Volkov?')
+  })
+
+  it('assigns the member who was picked once the question is answered', async () => {
+    const wrapper = form()
+
+    await fill(wrapper, 'Member', 'mbr_volkov')
+    await click(wrapper, 'Review')
+    await click(wrapper, 'Yes, assign it')
+
+    expect(wrapper.emitted('assign')).toEqual([
+      [{ userId: 'mbr_volkov', cardNumber: '0004B1C7' }],
+    ])
+  })
+
+  it('carries a typed label, trimmed, and leaves it out when it is blank', async () => {
+    const wrapper = form()
+
+    await fill(wrapper, 'Member', 'mbr_rivera')
+    await fill(wrapper, 'Label, optional', '  blue fob  ')
+    await click(wrapper, 'Review')
+    await click(wrapper, 'Yes, assign it')
+
+    expect(wrapper.emitted('assign')).toEqual([
+      [{ userId: 'mbr_rivera', cardNumber: '0004B1C7', label: 'blue fob' }],
+    ])
+  })
+
+  it('goes back to the form without assigning', async () => {
+    const wrapper = form()
+
+    await fill(wrapper, 'Member', 'mbr_rivera')
+    await click(wrapper, 'Review')
+    await click(wrapper, 'Back')
+
+    expect(wrapper.emitted('assign')).toBeUndefined()
+    expect(wrapper.text()).toContain('Search name or email')
+  })
+
+  it('narrows the list to what was searched, over name and email both', async () => {
+    const wrapper = form()
+
+    await fill(wrapper, 'Search name or email', 'volkov')
+
+    expect(optionLabels(wrapper, 'Member')).toEqual(['Pick a member', 'M. Volkov'])
+  })
+
+  it('will not review until a member is picked', async () => {
+    const wrapper = form()
+
+    await click(wrapper, 'Review')
+
+    expect(wrapper.text()).not.toContain('Yes, assign it')
   })
 })

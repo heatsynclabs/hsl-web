@@ -1,7 +1,19 @@
 <template>
   <div class="field">
     <label class="field__label" :for="inputId">{{ label }}</label>
+    <textarea
+      v-if="rows > 1"
+      :id="inputId"
+      v-model="value"
+      class="field__input field__input--tall"
+      :rows="rows"
+      :autocomplete="autocomplete"
+      :required="required"
+      :aria-invalid="error ? 'true' : undefined"
+      :aria-describedby="error ? errorId : undefined"
+    />
     <input
+      v-else
       :id="inputId"
       v-model="value"
       class="field__input"
@@ -24,6 +36,8 @@ interface Props {
   error?: string
   autocomplete?: string
   required?: boolean
+  /** More than one and the box is a text area. `type` means nothing then. */
+  rows?: number
 }
 
 withDefaults(defineProps<Props>(), {
@@ -31,6 +45,7 @@ withDefaults(defineProps<Props>(), {
   error: '',
   autocomplete: undefined,
   required: false,
+  rows: 1,
 })
 
 const value = defineModel<string>({ default: '' })
@@ -64,6 +79,12 @@ const errorId = computed(() => `${inputId}-error`)
   font-family: var(--font-body);
   font-size: 16px;  /* below 16px iOS zooms the page on focus */
   color: var(--g-ink);
+}
+
+.field__input--tall {
+  min-height: 0;
+  resize: vertical;
+  line-height: var(--leading-normal);
 }
 
 .field__input[aria-invalid='true'] {

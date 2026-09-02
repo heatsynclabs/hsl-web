@@ -75,12 +75,17 @@ reads as a sentence rather than a 409, a slot above 199 is marked as one the
 reader cannot see, and the guard sends every wrong role to the refusal screen
 rather than into a directory it cannot read.
 
-They render with `renderToString` from `@vue/test-utils` rather than `mount`,
-because neither `jsdom` nor `happy-dom` is installed in this workspace. That is
-why the logic worth asserting on lives in `src/lib` and in props rather than
-inside a click handler: the views fetch and hold state, the components under
-them take props and emit what an admin asked for, and both halves can be tested
-without a DOM.
+The logic worth asserting on lives in `src/lib` and in props rather than inside
+a click handler: the views fetch and hold state, and the components under them
+take props and emit what an admin asked for.
+
+The privileged controls are also tested as sequences rather than as states,
+under jsdom, because this app grants roles and opens a building. One click never
+turns card access on, a card is assigned only after the question naming the
+member is answered, the roles form sends only what changed and never card
+access, the rear unlock button sends nothing, and the door controls send nothing
+while the last report is stale. `src/test-support/interact.ts` finds a control
+by the words on it, the way a person does.
 
 ## What it depends on
 

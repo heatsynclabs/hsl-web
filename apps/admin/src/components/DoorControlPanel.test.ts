@@ -1,7 +1,8 @@
 import type { DoorStatusResponse } from '@hsl/schema'
-import { renderToString } from '@vue/test-utils'
+import { mount, renderToString } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 
+import { attached, buttonLabels, click, isDisabled } from '../test-support/interact.ts'
 import { doorReportingLive } from '../test-fixtures.ts'
 import DoorControlPanel from './DoorControlPanel.vue'
 
@@ -66,5 +67,58 @@ describe('DoorControlPanel', () => {
     })
 
     expect(html).toContain('Open front was refused.')
+  })
+})
+
+/**
+ * The controls that open a building. Rendering proves the rear unlock button is
+ * on the screen and disabled. Only clicking proves that pressing it sends
+ * nothing, which is the part the 2018 lab decision is about.
+ */
+describe('DoorControlPanel, clicked', () => {
+  function panel(door: DoorStatusResponse = doorReportingLive) {
+    return mount(DoorControlPanel, { ...attached, props: { ...base, door } })
+  }
+
+  it('sends the command on the button that was pressed', async () => {
+    const wrapper = panel()
+
+    await click(wrapper, 'Open front')
+
+    expect(wrapper.emitted('send')).toEqual([['open-front', 'Open front']])
+  })
+
+  it('sends nothing when the rear unlock button is pressed, per the 2018 decision', async () => {
+    const wrapper = panel()
+
+    expect(isDisabled(wrapper, 'Unlock rear')).toBe(true)
+    await click(wrapper, 'Unlock rear')
+
+    expect(wrapper.emitted('send')).toBeUndefined()
+  })
+
+  it('sends nothing while the last report is too old to read as live', async () => {
+    const wrapper = panel({ ...doorReportingLive, stale: true })
+
+    await click(wrapper, 'Open front')
+    await click(wrapper, 'Lock all')
+
+    expect(wrapper.emitted('send')).toBeUndefined()
+  })
+
+  it('sends nothing while another command is already in flight', async () => {
+    const wrapper = panel()
+    await wrapper.setProps({ busy: 'open-front' })
+
+    await click(wrapper, 'Lock all')
+
+    expect(wrapper.emitted('send')).toBeUndefined()
+  })
+
+  it('offers no alarm toggle at all when there is no status to toggle', () => {
+    const wrapper = panel({ status: null, reportedAt: null, stale: true })
+
+    expect(buttonLabels(wrapper)).not.toContain('Arm alarm')
+    expect(buttonLabels(wrapper)).not.toContain('Disarm alarm')
   })
 })

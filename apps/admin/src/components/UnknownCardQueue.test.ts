@@ -1,6 +1,7 @@
-import { renderToString } from '@vue/test-utils'
+import { mount, renderToString } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 
+import { attached } from '../test-support/interact.ts'
 import { unknownCards } from '../test-fixtures.ts'
 import UnknownCardQueue from './UnknownCardQueue.vue'
 
@@ -49,5 +50,33 @@ describe('UnknownCardQueue', () => {
     const html = await renderToString(UnknownCardQueue, { props: { ...base, cards: unknownCards } })
 
     expect(html).not.toContain('may be behind')
+  })
+})
+
+/**
+ * Enrolment starts here, and the number picked has to be the number on the row
+ * that was pressed. Getting it wrong assigns somebody else's card.
+ */
+describe('UnknownCardQueue, clicked', () => {
+  it('picks the card on the row whose Assign was pressed', async () => {
+    const wrapper = mount(UnknownCardQueue, {
+      ...attached,
+      props: { ...base, cards: unknownCards },
+    })
+
+    await wrapper.findAll('button')[1]!.trigger('click')
+
+    expect(wrapper.emitted('pick')).toEqual([['00021D40']])
+  })
+
+  it('picks nothing while an assignment is already in flight', async () => {
+    const wrapper = mount(UnknownCardQueue, {
+      ...attached,
+      props: { ...base, cards: unknownCards, disabled: true },
+    })
+
+    await wrapper.findAll('button')[0]!.trigger('click')
+
+    expect(wrapper.emitted('pick')).toBeUndefined()
   })
 })

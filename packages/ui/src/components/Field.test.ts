@@ -1,4 +1,4 @@
-import { renderToString } from '@vue/test-utils'
+import { mount, renderToString } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import Field from './Field.vue'
 
@@ -49,5 +49,49 @@ describe('Field', () => {
     expect(describedBy).toBeTruthy()
     expect(html).toContain(`id="${describedBy}"`)
     expect(html).toContain('That email is already registered.')
+  })
+})
+
+/**
+ * Two profile fields hold whatever a member wants to write about what they can
+ * do and what they want to learn. A one line box says to write one line.
+ */
+describe('Field, given room for more than a line', () => {
+  it('is a single line box until asked for more', async () => {
+    const html = await renderToString(Field, { props: { label: 'Phone' } })
+
+    expect(html).toContain('<input')
+    expect(html).not.toContain('<textarea')
+  })
+
+  it('becomes a text area, still wired to its own label', async () => {
+    const html = await renderToString(Field, { props: { label: 'Skills you have', rows: 4 } })
+
+    expect(html).toContain('<textarea')
+    expect(html).toContain('rows="4"')
+
+    const target = html.match(/<label\b[^>]*\bfor="([^"]*)"/)?.[1]
+    expect(target).toBeTruthy()
+    expect(html).toMatch(new RegExp(`<textarea\\b[^>]*\\bid="${target}"`))
+  })
+
+  it('carries back what was typed, line breaks and all', async () => {
+    const wrapper = mount(Field, { props: { label: 'Skills you have', rows: 4 } })
+
+    await wrapper.get('textarea').setValue('Laser cutter\nMIG welding')
+
+    expect(wrapper.emitted('update:modelValue')).toEqual([['Laser cutter\nMIG welding']])
+  })
+
+  it('marks the text area invalid and points it at the message', async () => {
+    const html = await renderToString(Field, {
+      props: { label: 'Skills you have', rows: 4, error: 'That is longer than the box holds.' },
+    })
+
+    const describedBy = html.match(/<textarea\b[^>]*\baria-describedby="([^"]*)"/)?.[1]
+
+    expect(html).toMatch(/<textarea\b[^>]*\baria-invalid="true"/)
+    expect(describedBy).toBeTruthy()
+    expect(html).toContain(`id="${describedBy}"`)
   })
 })

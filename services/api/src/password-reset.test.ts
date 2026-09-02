@@ -8,7 +8,7 @@ import { loadConfig } from './config.ts'
 import { createDatabase } from './db.ts'
 import type { Mailer } from './mailer.ts'
 import { resetPasswordMessage } from './mailer.ts'
-import { describeDatabase } from './test-support/harness.ts'
+import { describeDatabase, testConfig } from './test-support/harness.ts'
 
 /**
  * Thirty-one imported members have an empty password hash. They could not sign
@@ -22,12 +22,10 @@ describeDatabase('password reset', () => {
   const sent: { to: string; subject: string; text: string }[] = []
   const mailer: Mailer = { send: async (message) => void sent.push(message) }
 
-  const config = loadConfig({
-    DATABASE_URL: process.env.DATABASE_URL ?? '',
-    PUBLIC_ORIGIN: 'http://localhost:3000',
-    AUTH_SECRET: 'a test secret that is long enough',
-    DOOR_TOKEN: 'a test door token that is long enough',
-  })
+  // Vitest runs a skipped describe's body to collect the names inside it, so
+  // this has to survive an unset DATABASE_URL. testConfig substitutes a URL
+  // nothing connects to.
+  const config = testConfig()
   const { db, pool } = createDatabase(config)
   const auth = createAuth(db, config, mailer)
 

@@ -13,23 +13,25 @@ runs on a laptop under Docker Compose, and `README.md` is the instructions.
 | Part | State | Proven by |
 |---|---|---|
 | `packages/schema` | built | 26 tests, 3 migrations applied to a real Postgres |
-| `packages/ui` | built | 24 tests, rendered in a browser in both themes |
+| `packages/ui` | built | 28 tests, rendered in a browser in both themes |
 | `packages/api-client` | built | 14 tests |
 | `services/api` | built | 198 tests against a real Postgres |
 | `services/door` | built, never spoken to hardware | 125 tests against a fake controller |
-| `apps/members` | built | 44 tests, walked through in a browser |
+| `apps/members` | built | 50 tests, walked through in a browser |
 | `apps/signup` | built | 33 tests, walked through in a browser |
-| `apps/admin` | built | 129 tests, walked through in a browser |
+| `apps/admin` | built | 157 tests, walked through in a browser |
 | `tools/import` | built, run against the real dump | 23 tests, plus the run in section 2 |
 | Compose stack | runs | brought up from nothing, every URL answers |
 | Backup and restore | works | `tools/restore-drill.sh` passes, in CI |
 | Deployment | not started | no host exists yet, see section 5 |
 
-593 tests. Lint, typecheck and the voice check are clean.
+631 tests. Lint, typecheck and the voice check are clean.
 
-14,668 lines of TypeScript and Vue, 7,334 lines of tests, 22 routes, 10 ADRs.
-The previous attempt was 50,941 lines and deployed nothing; the difference is
-almost entirely enforcement machinery that is not here on purpose.
+14,402 lines of TypeScript, Vue and build scripts, and 9,186 lines of tests,
+fixtures and harnesses, counted across `apps`, `packages`, `services` and
+`tools` with build output excluded. 22 routes, 13 ADRs. The previous attempt was
+50,941 lines and deployed nothing; the difference is almost entirely enforcement
+machinery that is not here on purpose.
 
 ## 2. What has been proven against real data
 
@@ -179,18 +181,39 @@ Beyond section 3. None of these is hidden in the code.
 
 - The door service has never spoken to real hardware. Every test runs against a
   fake that speaks the same wire protocol through the same codec.
-- The API image is 487 MB because `pnpm deploy --prod` keeps a workspace
-  dependency's own devDependencies. Roughly 110 MB of build tooling ships and
-  never runs.
-- The members app posts to the three better-auth endpoints directly rather than
-  using `better-auth/vue`, which is not a dependency of that app. The call sites
-  name the file and line each path was read from.
-- `packages/ui` has no multi-line input, so the two free text profile fields use
-  single line ones.
-- The admin suites render with `renderToString` and cannot click, because no DOM
-  environment is installed. Interaction is covered by rendering each state and by
-  pure functions.
 - No deploy workflow. Deployment is four lines by hand in `docs/operations.md`.
+- A stack trace from either service points into a bundled file rather than into
+  a source file. `docs/decisions/0013-services-ship-as-a-bundle.md` says why,
+  and rebuilding the same commit gives the same line numbers.
+
+Closed since the audit. These are the four this section used to list as doable
+now, each with an ADR and each verified against the running system rather than
+in a diff.
+
+- **jsdom, and the admin app's interactions.** The privileged controls are
+  tested as sequences, not as states: one click never turns card access on, a
+  card is assigned only after the question naming the member is answered, the
+  roles form sends only what changed and never card access, and the rear unlock
+  button and every stale control send nothing. Each of those was watched failing
+  against a deliberately broken component. ADR 0011.
+- **A multi-line box.** `Field` takes `rows`, and the two skills questions on
+  the profile use it. Typed into a browser, saved, and read back out of Postgres
+  with the line break intact.
+- **better-auth's own client** in the members app, in place of four hand-copied
+  paths. ADR 0012. Sign in, a refused sign in, sign out and the whole reset loop
+  including the emailed link were walked in a browser against the running stack.
+- **The images.** Both services bundle to one file per entry point and neither
+  runtime image has a `node_modules`. The API image is 240 MB rather than 475,
+  of which 231 MB is the `node:24.20-alpine` base and 6.9 MB is the application.
+  The door image is 232 MB rather than 271. Every entry point in the API image
+  was run: migrate, seed, make-admin, and the server signing a seeded member in.
+  ADR 0013.
+
+One more thing turned up while running the baseline. `password-reset.test.ts`
+failed rather than skipping without `DATABASE_URL`, because Vitest runs a
+skipped describe's body to collect the names in it and that body called
+`loadConfig` with an empty URL. It uses the harness's `testConfig` now, and the
+suite skips the way `README.md` says it does.
 
 ## 8. Open licence questions
 

@@ -37,13 +37,13 @@ pnpm --filter @hsl/members typecheck
 pnpm --filter @hsl/members build
 ```
 
-The suites render with `renderToString` from `@vue/test-utils`, because neither
-`jsdom` nor `happy-dom` is in the workspace catalog. That shapes the code: a
-screen awaits its request in `setup` and `App.vue` holds the `Suspense` boundary
-that draws the loading state, so the server renderer resolves a screen before it
-renders and a test can assert on what a person would see. It also means there
-are no click or typing tests. The refusals that depend on a click are asserted
-against `src/lib/auth.ts` instead, with `fetch` stubbed.
+Most suites render with `renderToString`. That shapes the code: a screen awaits
+its request in `setup` and `App.vue` holds the `Suspense` boundary that draws the
+loading state, so the server renderer resolves a screen before it renders and a
+test can assert on what a person would see.
+
+The profile form is tested by typing into it under jsdom, because the two skills
+boxes hold paragraphs and the line breaks have to survive the save.
 
 `src/test-fixtures.ts` holds an invented member. Nothing there came from the
 production dump.

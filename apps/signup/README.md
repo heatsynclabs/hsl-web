@@ -42,8 +42,8 @@ pnpm --filter @hsl/signup build
 the API, so most of the behaviour is tested without rendering anything: what the
 schema refuses, that nothing is sent before the last step, and that an email
 which already has an account offers sign in rather than a status code. The view
-suites render with `renderToString`, because neither `jsdom` nor `happy-dom` is
-installed in this workspace.
+suites render with `renderToString`, which is enough for a flow whose decisions
+are all in `join-flow.ts`.
 
 ## What it depends on
 
