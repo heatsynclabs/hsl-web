@@ -192,7 +192,7 @@ pnpm dev
 pnpm check      # lint, typecheck, test
 ```
 
-645 tests. The ones that need a database read `DATABASE_URL` and skip with a
+651 tests. The ones that need a database read `DATABASE_URL` and skip with a
 message when it is not set. The door service tests run against a fake controller
 that speaks the real wire protocol, so they need no hardware.
 

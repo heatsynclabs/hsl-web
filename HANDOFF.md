@@ -3,7 +3,7 @@
 Where this stands, what is proven, and what the next person has to decide. One
 page, kept current. If it disagrees with anything else, fix one of them.
 
-Last updated 2026-09-02.
+Last updated 2026-09-03.
 
 ## 1. State
 
@@ -19,15 +19,15 @@ runs on a laptop under Docker Compose, and `README.md` is the instructions.
 | `services/door` | built, never spoken to hardware | 125 tests against a fake controller |
 | `apps/members` | built | 55 tests, walked through in a browser |
 | `apps/signup` | built | 33 tests, walked through in a browser |
-| `apps/admin` | built | 166 tests, walked through in a browser |
+| `apps/admin` | built | 172 tests, walked through in a browser |
 | `tools/import` | built, run against the real dump | 23 tests, plus the run in section 2 |
 | Compose stack | runs | brought up from nothing, every URL answers |
 | Backup and restore | works | `tools/restore-drill.sh` passes, in CI |
 | Deployment | not started | no host exists yet, see section 5 |
 
-645 tests. Lint, typecheck and the voice check are clean.
+651 tests. Lint, typecheck and the voice check are clean.
 
-14,468 lines of TypeScript, Vue and build scripts, and 9,355 lines of tests,
+14,468 lines of TypeScript, Vue and build scripts, and 9,421 lines of tests,
 fixtures and harnesses, counted across `apps`, `packages`, `services` and
 `tools` with build output excluded. 22 routes, 13 ADRs. The previous attempt was
 50,941 lines and deployed nothing; the difference is almost entirely enforcement
@@ -127,6 +127,32 @@ Two more came from using the finished screens rather than from a reviewer:
     which is right for the sign in screen and wrong for the one screen that can
     set a new password.
 
+### The second review
+
+The work that closed section 7 was reviewed the same way on 2026-09-03: eight
+reviewers, and every finding above minor handed to two more agents told to
+refute it, one by reproducing it and one by hunting for the guard elsewhere.
+Thirteen survived and are fixed in `6118cc6`. Two are worth carrying forward.
+
+16. **The boundary gate had never enforced anything.** `eslint-plugin-boundaries`
+    resolved nothing for a relative import written without a file extension,
+    which is how most of this repository is written, so an app importing
+    straight from a service passed lint in silence. Section 5 of
+    `CONTRIBUTING.md` was unenforced from the beginning, the same shape as
+    finding 3. The resolver is configured now, both directions are reported, and
+    the tree passes.
+17. **Most of the rest were tests that would have passed against broken code.**
+    The door panel asserted one of its five commands, so rewiring every button
+    to send `open-front` left all 157 tests green. Sign in never asserted the
+    password reached the request body. Card deactivation never proved which slot
+    it sent. Each is covered now, and each was watched failing against a named
+    mutation of the source.
+
+The bundling and the images were probed hardest and came back clean: every entry
+point runs from the built image, every `require` in the emitted files resolves
+to a Node builtin, nothing about the build machine is baked in, and the bundles
+are byte reproducible.
+
 ## 4. Facts that overrule the older documents
 
 `docs/legacy-system.md` has the full list with sources. The ones that changed
@@ -192,10 +218,13 @@ Beyond section 3. None of these is hidden in the code.
   moved the members app onto better-auth's own client and stopped there, because
   the client costs 28.94 kB in a browser bundle and the admin app is used by a
   handful of people. The path is named in a comment beside it.
-- A member whose stored skills answer is longer than `longText` accepts cannot
-  shorten it through the profile form without retyping, because the box now
-  stops at 2,000 characters. Nothing on the import path bounds that column, so
-  such a row can exist. Everything else on their profile still saves.
+- The `current_skills` and `desired_skills` columns are unbounded `text`, the
+  response contract has no maximum and the import copies what Rails held, but
+  the request contract caps both at 2,000 characters. So the import can write a
+  row the profile form cannot send back unchanged. Nothing breaks: the form
+  sends only what changed, and a member over the limit can delete characters and
+  save, which was checked in a browser against a planted 2,005 character value.
+  The import does not report such rows, and it is the one place that could.
 
 ## 8. Open licence questions
 
