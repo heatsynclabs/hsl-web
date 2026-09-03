@@ -247,6 +247,6 @@ still open. `docs/operations.md` covers deploying to a real host.
 
 ## Licence
 
-Apache 2.0. `ATTRIBUTIONS.md` lists the dependencies and the borrowed patterns,
-including the earlier HeatSync work this builds on, and the licence questions
-that are still open.
+MIT, in `LICENSE`. `ATTRIBUTIONS.md` lists the dependencies and the borrowed
+patterns, including the earlier HeatSync work this builds on, and the licence
+questions that are still open.

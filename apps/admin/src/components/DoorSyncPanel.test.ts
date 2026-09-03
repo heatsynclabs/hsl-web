@@ -1,7 +1,8 @@
 import { ApiError } from '@hsl/api-client'
-import { renderToString } from '@vue/test-utils'
+import { mount, renderToString } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 
+import { attached, click } from '../test-support/interact.ts'
 import DoorSyncPanel from './DoorSyncPanel.vue'
 
 const base = { saving: false, queuedAt: null, error: null }
@@ -35,5 +36,28 @@ describe('DoorSyncPanel', () => {
     const html = await renderToString(DoorSyncPanel, { props: { ...base, error: down } })
 
     expect(html).toContain('The door service has not reported recently.')
+  })
+})
+
+/**
+ * Asking the door service to push the card table now rather than on its next
+ * pass. Harmless to press twice, but a button that sends nothing looks like a
+ * broken door and sends a volunteer looking in the wrong place.
+ */
+describe('DoorSyncPanel, clicked', () => {
+  it('asks for a sync when pressed', async () => {
+    const wrapper = mount(DoorSyncPanel, { ...attached, props: base })
+
+    await click(wrapper, 'Sync now')
+
+    expect(wrapper.emitted('sync')).toEqual([[]])
+  })
+
+  it('asks for nothing while the last ask is still in flight', async () => {
+    const wrapper = mount(DoorSyncPanel, { ...attached, props: { ...base, saving: true } })
+
+    await click(wrapper, 'Asking')
+
+    expect(wrapper.emitted('sync')).toBeUndefined()
   })
 })

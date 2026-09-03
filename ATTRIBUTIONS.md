@@ -276,13 +276,12 @@ in `packages/ui` came from it.
   the same organisation. An outside fork of this repository has no stated
   permission to ship the marks.
 
-**This repository has no LICENSE file.** The root `package.json` declares
-`"license": "Apache-2.0"` and no `LICENSE` file exists beside it.
+**This repository is MIT.** `LICENSE` holds the text and the root
+`package.json` declares `"license": "MIT"`. It carried `"license": "Apache-2.0"`
+with no licence file beside it until 2026-09-03, which is what this entry used
+to record as an open question.
 
-- CONFIRM BY: adding the Apache-2.0 text as `LICENSE`, or changing the field if
-  Apache-2.0 was not the intent. Note that Apache-2.0 here sits alongside a
-  Creative Commons Attribution 3.0 obligation to the Rails app, which is
-  compatible in the direction that matters, since CC BY 3.0 asks only for
-  attribution and this file provides it.
-- BLAST RADIUS: a declared licence with no text is unenforceable and confusing to
-  a contributor.
+MIT sits alongside the Creative Commons Attribution 3.0 obligation to the Rails
+app, which is compatible in the direction that matters: CC BY 3.0 asks only for
+attribution and this file provides it. It is also compatible with every
+dependency licence in the table above, all of which are permissive.

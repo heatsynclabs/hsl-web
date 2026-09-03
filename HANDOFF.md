@@ -234,7 +234,8 @@ Read from the source files, not assumed. `ATTRIBUTIONS.md` has the detail.
   one on its own firmware.
 - **GANTRY has no declared licence.** The tokens and all 29 marks came from it.
 - **The Rails app is CC BY 3.0**, a content licence rather than a software one.
-- This repository declares Apache 2.0 and has no LICENSE file.
+- This repository is MIT, and `LICENSE` now holds the text. It was declared
+  Apache 2.0 with no licence file until 2026-09-03.
 
 ## 9. If you are picking this up
 

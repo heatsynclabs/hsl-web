@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "HeatSync Labs members and door system",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "engines": {
     "node": ">=22.12.0"
   },
