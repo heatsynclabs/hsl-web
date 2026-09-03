@@ -230,8 +230,13 @@ access and each one changes code.
    read off the device.
 2. **Which physical door is controller door 1.** Getting it wrong opens the
    wrong door.
-3. **Whether the deployed firmware is the DEBUG build.** If not, `dumpUser`
-   prints asterisks and readback verification is impossible.
+3. **Whether the deployed firmware is the DEBUG build.** Check this before
+   anything else. `dumpUser` prints the tag only when `DEBUG` is 2, firmware
+   line 105, and prints `********` otherwise. On such a board the card table
+   dump cannot be parsed, which is finding 18's failure exactly: reconcile reads
+   an empty controller and rewrites all 64 cards every minute forever. The
+   reconcile loop as designed does not work against a board built any other way,
+   and knowing that costs one `curl`.
 4. **The live `PRIVPASSWORD`, controller IP and MAC.** The committed `0x1234` is
    the public example value, and the value to configure is the four hex
    characters on their own, `1234`, not the C literal. The door service refuses
@@ -243,8 +248,26 @@ access and each one changes code.
 
 Beyond section 3. None of these is hidden in the code.
 
-- The door service has never spoken to real hardware. Every test runs against a
-  fake that speaks the same wire protocol through the same codec.
+- The door service has never spoken to real hardware. It now speaks to a
+  simulated board over a real socket, which is what caught findings 18 to 20,
+  but that board answers the bytes this repository read out of the firmware and
+  therefore agrees with that reading by construction. See
+  `docs/decisions/0014-a-simulated-controller.md`.
+- **Nothing anywhere sets a network timeout.** All three paths use a bare
+  `fetch`: the door service to the controller in
+  `adapters/openaccess-arduino/controller.ts`, the door service to the API in
+  `link.ts`, and the browser to the API in `packages/api-client`. The first is
+  the one that matters. Arming the alarm chirps twenty times at 300 ms, firmware
+  line 517, so the board legitimately takes about six seconds to answer, and a
+  board that has stopped answering leaves the request hanging on the runtime's
+  default rather than on anything chosen here. The reconcile pass awaits it, so
+  one hung request stalls reconciliation until it gives up. A timeout has to be
+  longer than six seconds and shorter than a pass.
+- Only one runbook exists, `import-the-members-database.md`, against section 10
+  of `CONTRIBUTING.md`, which asks for one for anything a volunteer might do at
+  2am. `docs/operations.md` covers deploying and what to look at when something
+  is wrong, and there is nothing written for the cutover itself or for going
+  back.
 - No deploy workflow. Deployment is four lines by hand in `docs/operations.md`.
 - A stack trace from either service points into a bundled file rather than into
   a source file. `docs/decisions/0013-services-ship-as-a-bundle.md` says why,
@@ -260,7 +283,12 @@ Beyond section 3. None of these is hidden in the code.
   row the profile form cannot send back unchanged. Nothing breaks: the form
   sends only what changed, and a member over the limit can delete characters and
   save, which was checked in a browser against a planted 2,005 character value.
-  The import does not report such rows, and it is the one place that could.
+  The import preflight reports the rows so nobody meets one by surprise.
+
+- `/space_api.json` has never been proven byte for byte against the live one.
+  `README.md` says parity gets proven on a test hostname before the hostname
+  moves, and nothing does that yet. The lab website and an ESP8266 status LED
+  both read it, and neither is in this repository.
 
 ## 8. Open licence questions
 
