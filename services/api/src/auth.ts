@@ -41,17 +41,30 @@ export type Auth = ReturnType<typeof createAuth>
  * is the whole story. A second container would need the storage option, and
  * a limit at the proxy is worth having either way.
  */
-    const RATE_LIMIT = {
+/**
+ * Exported so the suite asserts against the number that is configured rather
+ * than a literal of its own. A limit the tests disagree with is worse than no
+ * limit, because the disagreement is what people learn to ignore.
+ */
+export const SIGN_IN_ATTEMPTS_PER_MINUTE = 30
+
+const RATE_LIMIT = {
   enabled: true,
   window: 60,
   max: 120,
   customRules: {
-    // Ten tries a minute is more than a person who has forgotten which of
-    // their two passwords it was, and far less than a list.
-    '/sign-in/email': { window: 60, max: 10 },
-    // Each one sends mail to somebody's inbox, so the limit is about them
-    // rather than about us.
-    '/request-password-reset': { window: 300, max: 3 },
+    // These are per source address, not per person: better-auth keys the bucket
+    // on `ip|path` and nothing configures that away. Everyone signing in from
+    // inside the lab shares one public address, so the number has to survive a
+    // room, not a person. Thirty a minute covers an orientation night and is
+    // still nowhere near walking a password list against bcrypt at cost 10.
+    // A successful sign in spends the budget too, because the limiter runs
+    // before the handler and does not look at the outcome.
+    '/sign-in/email': { window: 60, max: SIGN_IN_ATTEMPTS_PER_MINUTE },
+    // Each one sends mail to somebody's inbox. Ten in five minutes from one
+    // address, because the 31 imported members with no password have only this
+    // way in and they turn up at the same table on the same evening.
+    '/request-password-reset': { window: 300, max: 10 },
     '/reset-password': { window: 300, max: 10 },
   },
 } as const

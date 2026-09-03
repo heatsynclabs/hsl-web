@@ -21,6 +21,8 @@ const client = createAuthClient()
 /** better-auth answers 401 with this code when either the email or the password is wrong. */
 const INVALID_CREDENTIALS = 'INVALID_EMAIL_OR_PASSWORD'
 
+const TOO_MANY_REQUESTS = 429
+
 export class AuthError extends Error {
   /** Zero when no response arrived at all. */
   readonly status: number
@@ -44,8 +46,19 @@ function explain(status: number, message: string | undefined, code: string | und
   if (code === INVALID_CREDENTIALS) {
     return 'That email and password do not match an account. You are not signed in. Check both, or use the password reset link.'
   }
-  const said = message === undefined || message === '' ? '' : ` ${message}.`
+  if (status === TOO_MANY_REQUESTS) {
+    // The limit is keyed on the source address, so everyone on the lab network
+    // shares one budget. Telling this member to check their password sends them
+    // round the loop again and spends what is left of it.
+    return 'Too many attempts have come from this network recently. Nothing was changed. Wait a few minutes and try again, and tell an admin if it keeps happening.'
+  }
+  const said = message === undefined || message === '' ? '' : ` ${sentence(message)}`
   return `The request was refused with ${status}.${said} Nothing was changed. Try again, and tell an admin if it keeps happening.`
+}
+
+/** One full stop at the end, whether or not the library already wrote one. */
+function sentence(message: string): string {
+  return message.endsWith('.') ? message : `${message}.`
 }
 
 async function answered(call: Promise<Answer>): Promise<unknown> {

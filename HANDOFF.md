@@ -12,22 +12,22 @@ runs on a laptop under Docker Compose, and `README.md` is the instructions.
 
 | Part | State | Proven by |
 |---|---|---|
-| `packages/schema` | built | 26 tests, 3 migrations applied to a real Postgres |
+| `packages/schema` | built | 26 tests, 4 migrations applied to a real Postgres |
 | `packages/ui` | built | 28 tests, rendered in a browser in both themes |
 | `packages/api-client` | built | 14 tests |
 | `services/api` | built | 198 tests against a real Postgres |
 | `services/door` | built, never spoken to hardware | 125 tests against a fake controller |
-| `apps/members` | built | 50 tests, walked through in a browser |
+| `apps/members` | built | 55 tests, walked through in a browser |
 | `apps/signup` | built | 33 tests, walked through in a browser |
-| `apps/admin` | built | 157 tests, walked through in a browser |
+| `apps/admin` | built | 166 tests, walked through in a browser |
 | `tools/import` | built, run against the real dump | 23 tests, plus the run in section 2 |
 | Compose stack | runs | brought up from nothing, every URL answers |
 | Backup and restore | works | `tools/restore-drill.sh` passes, in CI |
 | Deployment | not started | no host exists yet, see section 5 |
 
-631 tests. Lint, typecheck and the voice check are clean.
+645 tests. Lint, typecheck and the voice check are clean.
 
-14,402 lines of TypeScript, Vue and build scripts, and 9,186 lines of tests,
+14,468 lines of TypeScript, Vue and build scripts, and 9,355 lines of tests,
 fixtures and harnesses, counted across `apps`, `packages`, `services` and
 `tools` with build output excluded. 22 routes, 13 ADRs. The previous attempt was
 50,941 lines and deployed nothing; the difference is almost entirely enforcement
@@ -58,7 +58,7 @@ at 2am with a door that will not open, a new contributor adding a feature, a
 security reviewer, a maintainer in 2029, an accessibility reviewer, somebody
 running a different hackerspace, a board member, and a senior engineer looking
 for unearned complexity. Every finding above minor was then given to a second
-agent told to refute it. Twelve survived.
+agent told to refute it. Thirteen survived.
 
 Fixed, each with a test watched failing first:
 
@@ -108,9 +108,11 @@ The five that were confirmed and left open in the first pass are also fixed:
     has used, and is refused for one with a card, a payment, a certification, a
     signed release, an orientation, a role or any audit history.
 12. **Rate limiting was better-auth's default**: off outside production, 100
-    requests per ten seconds when on. Ten sign-in attempts a minute now, and a
-    correct password is refused while limited so a guesser learns nothing from
-    the difference.
+    requests per ten seconds when on. It is thirty sign-in requests a minute now,
+    and a correct password is refused while limited so a guesser learns nothing
+    from the difference. The bucket is keyed on the source address, which behind
+    the lab's own NAT is one budget for everyone in the building, so the numbers
+    are chosen to survive an orientation night rather than to bound one person.
 13. **A fresh install could not make its first admin.**
     `make admin EMAIL=...` grants it from the host, refuses to create a member,
     and records the change with no actor, which is what somebody with a shell
@@ -185,35 +187,15 @@ Beyond section 3. None of these is hidden in the code.
 - A stack trace from either service points into a bundled file rather than into
   a source file. `docs/decisions/0013-services-ship-as-a-bundle.md` says why,
   and rebuilding the same commit gives the same line numbers.
-
-Closed since the audit. These are the four this section used to list as doable
-now, each with an ADR and each verified against the running system rather than
-in a diff.
-
-- **jsdom, and the admin app's interactions.** The privileged controls are
-  tested as sequences, not as states: one click never turns card access on, a
-  card is assigned only after the question naming the member is answered, the
-  roles form sends only what changed and never card access, and the rear unlock
-  button and every stale control send nothing. Each of those was watched failing
-  against a deliberately broken component. ADR 0011.
-- **A multi-line box.** `Field` takes `rows`, and the two skills questions on
-  the profile use it. Typed into a browser, saved, and read back out of Postgres
-  with the line break intact.
-- **better-auth's own client** in the members app, in place of four hand-copied
-  paths. ADR 0012. Sign in, a refused sign in, sign out and the whole reset loop
-  including the emailed link were walked in a browser against the running stack.
-- **The images.** Both services bundle to one file per entry point and neither
-  runtime image has a `node_modules`. The API image is 240 MB rather than 475,
-  of which 231 MB is the `node:24.20-alpine` base and 6.9 MB is the application.
-  The door image is 232 MB rather than 271. Every entry point in the API image
-  was run: migrate, seed, make-admin, and the server signing a seeded member in.
-  ADR 0013.
-
-One more thing turned up while running the baseline. `password-reset.test.ts`
-failed rather than skipping without `DATABASE_URL`, because Vitest runs a
-skipped describe's body to collect the names in it and that body called
-`loadConfig` with an empty URL. It uses the harness's `testConfig` now, and the
-suite skips the way `README.md` says it does.
+- The admin app still reaches one better-auth path by hand.
+  `apps/admin/src/App.vue` posts to `/api/auth/sign-out` with `fetch`. ADR 0012
+  moved the members app onto better-auth's own client and stopped there, because
+  the client costs 28.94 kB in a browser bundle and the admin app is used by a
+  handful of people. The path is named in a comment beside it.
+- A member whose stored skills answer is longer than `longText` accepts cannot
+  shorten it through the profile form without retyping, because the box now
+  stops at 2,000 characters. Nothing on the import path bounds that column, so
+  such a row can exist. Everything else on their profile still saves.
 
 ## 8. Open licence questions
 

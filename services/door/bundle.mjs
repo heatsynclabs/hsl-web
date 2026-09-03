@@ -12,8 +12,9 @@ await build({
   platform: 'node',
   format: 'esm',
   target: 'node24',
-  // Several transitive packages are CommonJS and call require() as they load.
-  // An ESM bundle has no require, so one is made here.
+  // This bundle emits no require today. The banner is here so the two service
+  // bundle scripts read the same, and so adding a CommonJS dependency does not
+  // fail at load time in production.
   banner: {
     js: "import { createRequire as hslCreateRequire } from 'node:module'\nconst require = hslCreateRequire(import.meta.url)",
   },

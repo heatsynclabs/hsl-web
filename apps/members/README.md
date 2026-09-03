@@ -54,20 +54,16 @@ production dump.
 contract and `memberLevelLabel`, and `@hsl/api-client` for every request after
 sign in. `vue`, `vue-router` and `vite` are pinned in the workspace catalog.
 
-## Two things a reader should know
+## One thing a reader should know
 
-**Sign in does not use the better-auth client.** better-auth ships a Vue client
-at its `better-auth/vue` export and that is what should be here, but
-`better-auth` is not a dependency of this app so the import does not resolve.
-`src/lib/auth.ts` posts to the three routes directly instead, and its header
-names the files in the installed better-auth 1.7.2 that each path and body were
-read from. Adding `better-auth` to this app's dependencies is the fix.
+**Sign in does not go through `@hsl/api-client`.** Those four routes belong to
+better-auth, which serves them at `/api/auth`, so `src/lib/auth.ts` drives
+better-auth's own Vue client instead. It exists to turn two answer shapes into
+one: a refusal arrives as a value and a dead network throws, and both leave that
+file as an `AuthError` carrying a sentence a member can act on. See
+`docs/decisions/0012-better-auths-own-client.md`.
 
-**The reset form cannot work yet.** `services/api/src/auth.ts` configures
-`emailAndPassword` without `sendResetPassword`, so `/api/auth/request-password-reset`
-answers 400 with `Reset password isn't enabled`. The screen prints what the API
-says rather than claiming a link is on its way, and there is no screen for the
-second half of the flow.
+Everything after sign in goes through `@hsl/api-client` and the session it holds.
 
 ## The door screen and the two-admin note
 

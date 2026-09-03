@@ -195,6 +195,10 @@ Each service image is `node:24.20-alpine` plus one self-contained file per entry
 point, and no `node_modules` at all. The API image is 240 MB, of which 231 MB is
 the base image and 6.9 MB is `/app`. The door image is 232 MB on the same base.
 
+The API image carries two things beside the bundles: `/app/space_api.template.json`,
+which `SPACE_API_TEMPLATE_PATH` points at, and `/app/migrations`, which the
+migrate container applies. The door image carries neither.
+
 `pnpm bundle` in each service is what builds those files, and
 `docs/decisions/0013-services-ship-as-a-bundle.md` records why it replaced
 `pnpm deploy`. A stack trace from production therefore points into a bundled

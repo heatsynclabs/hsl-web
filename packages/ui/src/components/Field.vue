@@ -7,6 +7,7 @@
       v-model="value"
       class="field__input field__input--tall"
       :rows="rows"
+      :maxlength="maxlength"
       :autocomplete="autocomplete"
       :required="required"
       :aria-invalid="error ? 'true' : undefined"
@@ -18,6 +19,7 @@
       v-model="value"
       class="field__input"
       :type="type"
+      :maxlength="maxlength"
       :autocomplete="autocomplete"
       :required="required"
       :aria-invalid="error ? 'true' : undefined"
@@ -38,6 +40,11 @@ interface Props {
   required?: boolean
   /** More than one and the box is a text area. `type` means nothing then. */
   rows?: number
+  /**
+   * A courtesy to the person typing, so they stop at the limit rather than
+   * losing a paragraph to a refusal. The schema in @hsl/schema is the rule.
+   */
+  maxlength?: number
 }
 
 withDefaults(defineProps<Props>(), {
@@ -46,6 +53,7 @@ withDefaults(defineProps<Props>(), {
   autocomplete: undefined,
   required: false,
   rows: 1,
+  maxlength: undefined,
 })
 
 const value = defineModel<string>({ default: '' })

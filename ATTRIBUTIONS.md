@@ -45,7 +45,7 @@ ones installed, and every shared version is pinned once in the
 | `bcryptjs` | 3.0.2 | BSD-3-Clause | Verifies the legacy password hashes, per ADR 0004 |
 | `drizzle-orm` | 0.45.2 | Apache-2.0 | Tables and queries |
 | `drizzle-kit` | 0.31.10 | MIT | Generates the migrations, per ADR 0006 |
-| `nodemailer` | 9.1.1 | MIT | Sends the password reset mail from the API |
+| `nodemailer` | 9.1.1 | MIT-0 | Sends the password reset mail from the API |
 | `@types/nodemailer` | 8.0.1 | MIT | Types for the mailer |
 | `pg` | 8.23.0 | MIT | Postgres driver. Also the only dependency of `tools/import`, which resolves it from `services/api` |
 | `@types/pg` | 8.15.6 | MIT | Types for the driver |
@@ -62,15 +62,25 @@ Direct and transitive together, counted by licence.
 
 | Licence | Packages |
 |---|---|
-| MIT | 236 |
-| Apache-2.0 | 18 |
-| ISC | 14 |
-| BSD-2-Clause | 9 |
+| MIT | 363 |
+| Apache-2.0 | 41 |
+| ISC | 15 |
+| MPL-2.0 | 12 |
+| BSD-2-Clause | 11 |
+| BSD-3-Clause | 5 |
 | BlueOak-1.0.0 | 5 |
-| BSD-3-Clause | 4 |
-| MPL-2.0 | 2 |
+| MIT-0 | 3 |
+| CC0-1.0 | 1 |
+| 0BSD | 1 |
 
-All seven are permissive. Four of them carry an obligation worth naming.
+457 distinct packages. All ten licences are permissive. Four carry an obligation
+worth naming.
+
+The tree grew by 169 packages when jsdom entered the development install, which
+is where most of the new MPL-2.0 and every MIT-0, CC0-1.0 and 0BSD row comes
+from. None of them reaches a runtime image or a browser bundle: jsdom is a
+devDependency of four packages and the service images carry no `node_modules` at
+all.
 
 **Apache-2.0** wants the licence text and any `NOTICE` file preserved in a
 distribution. Of the 18 Apache packages, `drizzle-orm` 0.45.2 ships neither a
@@ -84,12 +94,17 @@ here. The other Apache packages are ESLint and Vitest internals:
 `@humanwhocodes/retry`, `@opentelemetry/semantic-conventions`, `detect-libc`,
 `eslint-visitor-keys`, `expect-type`, `xml-name-validator`.
 
-**MPL-2.0** is file level copyleft. Both packages are `lightningcss` 1.33.0 and
-its `lightningcss-darwin-arm64` native binary, pulled in by Vite as a build time
-CSS transformer. Their own source files are neither modified nor redistributed
-here, so the copyleft never reaches anything in this repository. If somebody ever
+**MPL-2.0** is file level copyleft. All twelve packages are `lightningcss` and
+its eleven per-platform native binaries, pulled in by Vite as a build time CSS
+transformer. Their own source files are neither modified nor redistributed here,
+so the copyleft never reaches anything in this repository. If somebody ever
 patches a lightningcss source file, that patched file stays MPL-2.0 and has to
 be published.
+
+**MIT-0** covers `nodemailer` 9.1.1, which the API uses to send password reset
+mail, plus two `@csstools` packages under the CSS tooling. MIT-0 is MIT without
+the attribution requirement, so it asks nothing of this repository. It is named
+here because the row above says so and a reader should not have to check.
 
 **BSD-3-Clause** covers `bcryptjs` 3.0.2, `esquery` 1.7.0, `source-map` 0.6.1 and
 `source-map-js` 1.2.1. The no endorsement clause means the lab does not describe

@@ -30,7 +30,16 @@ function pathOf(fetch: typeof globalThis.fetch): string {
 }
 
 function optionsOf(fetch: typeof globalThis.fetch): RequestInit {
-  return vi.mocked(fetch).mock.calls[0]?.[1] ?? {}
+  const calls = vi.mocked(fetch).mock.calls
+  if (calls.length === 0) throw new Error('Nothing was sent, so there are no request options to read.')
+  return calls[0]?.[1] ?? {}
+}
+
+/** What was actually posted, so a test can assert the password reached the wire. */
+function bodyOf(fetch: typeof globalThis.fetch): Record<string, unknown> {
+  const sent = optionsOf(fetch).body
+  if (typeof sent !== 'string') throw new Error(`The request body was ${typeof sent}, not JSON text.`)
+  return JSON.parse(sent) as Record<string, unknown>
 }
 
 afterEach(() => {
@@ -47,7 +56,9 @@ describe('signing in', () => {
     expect(pathOf(fetch)).toBe('/api/auth/sign-in/email')
     expect(optionsOf(fetch).method).toBe('POST')
     expect(optionsOf(fetch).credentials).toBe('include')
-    expect(String(optionsOf(fetch).body)).toContain('sam@example.org')
+    // Both, and the right way round. Sending the email as the password signs
+    // nobody in and would pass an assertion that only looks for the address.
+    expect(bodyOf(fetch)).toMatchObject({ email: 'sam@example.org', password: 'a password' })
   })
 
   it('says what to do next when the pair does not match, and which one is wrong to nobody', async () => {
@@ -71,6 +82,24 @@ describe('signing in', () => {
     expect(refusal).toBeInstanceOf(AuthError)
     expect((refusal as { status: number }).status).toBe(0)
     expect((refusal as Error).message).toContain('Nothing was sent')
+  })
+})
+
+describe('being rate limited', () => {
+  it('says to wait, and does not tell a member to try again right now', async () => {
+    const { AuthError, signIn } = await withFetch(
+      answers(429, { message: 'Too many requests. Please try again later.' }),
+    )
+
+    const refusal = await signIn('sam@example.org', 'a password').catch((error: unknown) => error)
+
+    expect(refusal).toBeInstanceOf(AuthError)
+    const said = (refusal as Error).message
+    expect(said).toContain('Wait a few minutes')
+    // The limit is keyed on the source address, so everyone in the lab shares
+    // it. A member who reads "check your password" will keep retrying.
+    expect(said).toContain('network')
+    expect(said).not.toMatch(/\.\./)
   })
 })
 
@@ -108,7 +137,8 @@ describe('asking for a password reset', () => {
     await requestPasswordReset('sam@example.org')
 
     expect(pathOf(fetch)).toBe('/api/auth/request-password-reset')
-    expect(String(optionsOf(fetch).body)).toContain('/reset-password')
+    expect(bodyOf(fetch)).toMatchObject({ email: 'sam@example.org' })
+    expect(String(bodyOf(fetch)['redirectTo'])).toContain('/reset-password')
   })
 
   it('carries the reason through when the server has no mail configured', async () => {
@@ -136,7 +166,12 @@ describe('setting a new password from the emailed link', () => {
     await resetPassword('a-token-from-the-email', 'a password they chose')
 
     expect(pathOf(fetch)).toBe('/api/auth/reset-password')
-    expect(String(optionsOf(fetch).body)).toContain('a-token-from-the-email')
+    // The password the member typed has to be the one that gets set. A test
+    // that only looks for the token passes while newPassword is left behind.
+    expect(bodyOf(fetch)).toMatchObject({
+      token: 'a-token-from-the-email',
+      newPassword: 'a password they chose',
+    })
   })
 
   it('says the link is spent in the words better-auth used', async () => {

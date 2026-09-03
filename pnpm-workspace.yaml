@@ -44,6 +44,11 @@ onlyBuiltDependencies:
 # 0.18.20. GHSA-67mh-4wv8-2f99 lets any website reach esbuild's development
 # server. Nothing here starts that server, so the path is not reachable, but it
 # is a build tool that ends up in an image and the override costs nothing.
+#
+# Scoped to the package it is for. Unscoped, it also replaced the catalog
+# specifier on the two services that depend on esbuild directly, so the version
+# of the bundler that builds the only production artifact was decided by this
+# range rather than by the catalog pin above.
 # Remove this when drizzle-kit drops @esbuild-kit, which it does on the 1.0 line.
 overrides:
-  esbuild: '>=0.25.0'
+  '@esbuild-kit/core-utils>esbuild': '>=0.25.0'

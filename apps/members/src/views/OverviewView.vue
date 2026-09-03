@@ -75,7 +75,9 @@ async function save(changes: PatchMeRequest): Promise<void> {
     await refreshSession(api)
   } catch (error) {
     if (!(error instanceof ApiError)) throw error
-    saveError.value = error.message
+    // The API writes a sentence a member can act on. error.message wraps it in
+    // the method, the path and "the caller", which is for a log, not a person.
+    saveError.value = error.problem ?? error.message
   } finally {
     saving.value = false
   }

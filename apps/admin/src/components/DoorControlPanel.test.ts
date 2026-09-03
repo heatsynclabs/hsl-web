@@ -80,12 +80,34 @@ describe('DoorControlPanel, clicked', () => {
     return mount(DoorControlPanel, { ...attached, props: { ...base, door } })
   }
 
-  it('sends the command on the button that was pressed', async () => {
+  /**
+   * Every button, not just the first. Asserting one of them leaves a mis-paired
+   * command in the v-for invisible, and the wrong pairing buzzes a door open
+   * when somebody asked to lock the building.
+   */
+  it.each([
+    ['Open front', 'open-front'],
+    ['Unlock front', 'unlock-front'],
+    ['Lock all', 'lock'],
+    ['Disarm alarm', 'disarm'],
+  ])('sends %s as %s, and nothing else', async (label, command) => {
     const wrapper = panel()
 
-    await click(wrapper, 'Open front')
+    await click(wrapper, label)
 
-    expect(wrapper.emitted('send')).toEqual([['open-front', 'Open front']])
+    expect(wrapper.emitted('send')).toEqual([[command, label]])
+  })
+
+  it('sends arm when the alarm is off, so the toggle is not stuck one way', async () => {
+    const off: DoorStatusResponse = {
+      ...doorReportingLive,
+      status: { ...doorReportingLive.status!, armed: 0 },
+    }
+    const wrapper = panel(off)
+
+    await click(wrapper, 'Arm alarm')
+
+    expect(wrapper.emitted('send')).toEqual([['arm', 'Arm alarm']])
   })
 
   it('sends nothing when the rear unlock button is pressed, per the 2018 decision', async () => {

@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs'
 import { testClient } from 'hono/testing'
 import { afterAll, beforeEach, expect, it } from 'vitest'
 
+import { SIGN_IN_ATTEMPTS_PER_MINUTE } from './auth.ts'
 import type { Harness, SignedInMember } from './test-support/harness.ts'
 import {
   addMember,
@@ -132,18 +133,20 @@ describeDatabase('guessing a password', () => {
       body: JSON.stringify({ email: member.member.email, password }),
     })
 
-  it('stops after ten tries in a minute', async () => {
+  it('stops after the configured number of tries in a minute', async () => {
     const codes: number[] = []
-    for (let attempt = 0; attempt < 14; attempt += 1) {
+    for (let attempt = 0; attempt < SIGN_IN_ATTEMPTS_PER_MINUTE + 4; attempt += 1) {
       codes.push((await guess('not the password')).status)
     }
 
-    expect(codes.filter((code) => code === 401)).toHaveLength(10)
+    expect(codes.filter((code) => code === 401)).toHaveLength(SIGN_IN_ATTEMPTS_PER_MINUTE)
     expect(codes.filter((code) => code === 429).length).toBeGreaterThan(0)
   })
 
   it('stops the right password too, so a guesser learns nothing from the difference', async () => {
-    for (let attempt = 0; attempt < 12; attempt += 1) await guess('not the password')
+    for (let attempt = 0; attempt < SIGN_IN_ATTEMPTS_PER_MINUTE + 2; attempt += 1) {
+      await guess('not the password')
+    }
 
     expect((await guess(TEST_PASSWORD)).status).toBe(429)
   })

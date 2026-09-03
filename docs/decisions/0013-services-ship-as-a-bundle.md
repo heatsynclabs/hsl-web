@@ -20,10 +20,12 @@ Two pnpm-shaped fixes were tried and measured. Stripping `devDependencies` from
 the workspace manifests before deploying changed nothing, because the legacy
 deploy resolves the lockfile rather than the manifests. The non-legacy deploy
 does prune, but it refuses to run unless `inject-workspace-packages=true` is set
-in the workspace and recorded in the lockfile, and injection copies workspace
-packages into their consumers instead of linking them, so an edit to
-`packages/ui` would not reach the members dev server until the next
-`pnpm install`. That is a worse thing to hand a volunteer than a large image.
+in the workspace and recorded in the lockfile. Turning that on rewrites the
+lockfile, so `pnpm install --frozen-lockfile` in every Dockerfile and in CI
+fails until the change is committed, and the setting then applies to every
+install anybody runs rather than only to the deploy that wanted it. Reaching for
+a workspace-wide install mode to work around one flag on one command is the
+wrong size of change for the problem.
 
 ## Alternatives
 
@@ -32,7 +34,7 @@ Read from the npm registry and the GitHub API on 2026-09-02.
 | Option | Latest | Published | License | npm publishers | Open issues | Why not |
 |---|---|---|---|---|---|---|
 | esbuild 0.28.2 | 0.28.2 | 2026-08-08 | MIT | 1 | 618 | Chosen. |
-| rolldown 1.2.7 | 1.2.7 | 2026-09-02 | MIT | 4 | 403 | Vite 8's bundler, so it is already in this tree, and it has more than one publisher. It is also the newest of the three on the Node-service-to-one-file job, and nothing here needs a plugin. The runner up. |
+| rolldown 1.2.7 | 1.2.7 | 2026-09-02 | MIT | 4 | 403 | The runner up, and better on the maintainer question: Vite 8 already pulls it into this tree and it has four publishers. It lost on age. Its 1.0 is months old, bundling a Node service to one file is not the job it was built for, and this is the step that produces the only production artifact. If it were the finding of a bug rather than a preference, that would flip. |
 | rollup 4.63.1 | 4.63.1 | 2026-08-28 | NOASSERTION on GitHub, MIT on npm | 5 | 609 | Needs `@rollup/plugin-node-resolve`, `-commonjs` and `-json` to bundle a Node service at all. Three more dependencies to reach the same file. |
 
 esbuild has one npm publisher account and one author writes almost all of it,
@@ -48,11 +50,15 @@ writes one self-contained file per entry into `dist/`. The Dockerfiles call
 `pnpm bundle` instead of `pnpm deploy`, and the runtime stage copies the bundle
 and nothing else. There is no `node_modules` in either runtime image.
 
-Two services means two twelve-line scripts rather than one shared one, per
-section 7: two uses is a coincidence, not an abstraction.
+Two services means two short scripts, thirty lines and twenty, rather than one
+shared one, per section 7: two uses is a coincidence, not an abstraction.
 
-The bundles are ESM and carry a `createRequire` banner, because nodemailer and
-several transitive packages are CommonJS and reach for `require` at load time.
+The API bundle is ESM and carries a `createRequire` banner, because nodemailer
+and pg are CommonJS and reach for `require` as they load. Every `require` left in
+the emitted file comes from one of those two, fifty from nodemailer and
+twenty-five from pg and its helpers, and each resolves to a Node builtin. The
+door bundle emits none and carries the banner only so the two scripts read the
+same.
 
 ## Consequence
 

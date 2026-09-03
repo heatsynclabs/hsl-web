@@ -7,8 +7,8 @@
       <Field v-model="draft.emergencyName" label="Emergency contact" />
       <Field v-model="draft.emergencyPhone" label="Emergency phone" type="tel" />
       <Field v-model="draft.emergencyEmail" label="Emergency email" type="email" />
-      <Field v-model="draft.currentSkills" label="Skills you have" :rows="4" />
-      <Field v-model="draft.desiredSkills" label="Skills you want" :rows="4" />
+      <Field v-model="draft.currentSkills" label="Skills you have" :rows="4" :maxlength="SKILLS_LIMIT" />
+      <Field v-model="draft.desiredSkills" label="Skills you want" :rows="4" :maxlength="SKILLS_LIMIT" />
 
       <fieldset class="profile-form__toggles">
         <legend class="profile-form__legend">Who can see this</legend>
@@ -58,6 +58,10 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), { saving: false, error: '' })
 const emit = defineEmits<{ save: [changes: PatchMeRequest]; cancel: [] }>()
 
+// What longText in @hsl/schema accepts. The box stops here so a member does not
+// write a paragraph and then meet a refusal; patchMeRequest is still the rule.
+const SKILLS_LIMIT = 2000
+
 const draft = reactive({
   name: props.member.name,
   phone: props.member.phone ?? '',
@@ -72,26 +76,48 @@ const draft = reactive({
   hidden: props.member.hidden,
 })
 
+const TEXT_FIELDS = [
+  'phone',
+  'postalCode',
+  'emergencyName',
+  'emergencyPhone',
+  'emergencyEmail',
+  'currentSkills',
+  'desiredSkills',
+] as const
+
+const FLAGS = ['emailVisible', 'phoneVisible', 'hidden'] as const
+
 /** An emptied box means the member cleared the field, which the column stores as null. */
 function orNull(value: string): string | null {
   const trimmed = value.trim()
   return trimmed === '' ? null : trimmed
 }
 
+/**
+ * Only the fields the member actually changed.
+ *
+ * Sending the whole record meant an imported answer longer than the schema
+ * accepts was revalidated on every save, so one over-length box a member was
+ * not editing refused their phone number too, with a message naming a field
+ * they had not touched.
+ */
 function toPatch(): PatchMeRequest {
-  return {
-    name: draft.name.trim(),
-    phone: orNull(draft.phone),
-    postalCode: orNull(draft.postalCode),
-    emergencyName: orNull(draft.emergencyName),
-    emergencyPhone: orNull(draft.emergencyPhone),
-    emergencyEmail: orNull(draft.emergencyEmail),
-    currentSkills: orNull(draft.currentSkills),
-    desiredSkills: orNull(draft.desiredSkills),
-    emailVisible: draft.emailVisible,
-    phoneVisible: draft.phoneVisible,
-    hidden: draft.hidden,
+  const edited: PatchMeRequest = {}
+
+  const name = draft.name.trim()
+  if (name !== props.member.name) edited.name = name
+
+  for (const field of TEXT_FIELDS) {
+    const value = orNull(draft[field])
+    if (value !== props.member[field]) edited[field] = value
   }
+
+  for (const field of FLAGS) {
+    if (draft[field] !== props.member[field]) edited[field] = draft[field]
+  }
+
+  return edited
 }
 </script>
 

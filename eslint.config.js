@@ -91,6 +91,12 @@ export default [
     files: LINTED,
     plugins: { boundaries },
     settings: {
+      // Without this the resolver only knows .mjs, .js, .json and .node, so an
+      // import written as '../../services/api/src/app' does not resolve, is
+      // matched to no element, and is silently allowed. That is how this
+      // codebase writes most of its relative imports, so the gate below was
+      // reporting nothing at all.
+      'import/resolver': { node: { extensions: ['.ts', '.mts', '.vue', '.mjs', '.js', '.json'] } },
       'boundaries/elements': [
         { type: 'app', pattern: 'apps/*' },
         { type: 'package', pattern: 'packages/*' },

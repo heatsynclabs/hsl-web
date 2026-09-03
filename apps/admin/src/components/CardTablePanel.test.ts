@@ -1,7 +1,8 @@
 import { ApiError } from '@hsl/api-client'
-import { renderToString } from '@vue/test-utils'
+import { mount, renderToString } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 
+import { attached, buttonLabels } from '../test-support/interact.ts'
 import { cardTableView } from '../test-fixtures.ts'
 import CardTablePanel from './CardTablePanel.vue'
 
@@ -70,5 +71,45 @@ describe('CardTablePanel', () => {
     })
 
     expect(html).toContain('No card is in slot 41.')
+  })
+})
+
+/**
+ * Deactivating takes a card out of the controller on the next pass, so the slot
+ * that travels has to be the slot on the row that was pressed. The fixture
+ * holds slot 17 inactive and slots 41 and 200 active, so the second button is
+ * slot 200 and a component that always sends the first row would be caught.
+ */
+describe('CardTablePanel, clicked', () => {
+  function panel(busySlot: number | null = null) {
+    return mount(CardTablePanel, { ...attached, props: { ...base, busySlot, view: cardTableView } })
+  }
+
+  it('offers Deactivate on the active rows and on no other', () => {
+    expect(buttonLabels(panel())).toEqual(['Deactivate', 'Deactivate'])
+  })
+
+  it('sends the slot on the row that was pressed, not the first active one', async () => {
+    const wrapper = panel()
+
+    await wrapper.findAll('button')[1]!.trigger('click')
+
+    expect(wrapper.emitted('deactivate')).toEqual([[200]])
+  })
+
+  it('sends the first row when that is the row pressed', async () => {
+    const wrapper = panel()
+
+    await wrapper.findAll('button')[0]!.trigger('click')
+
+    expect(wrapper.emitted('deactivate')).toEqual([[41]])
+  })
+
+  it('sends nothing while another deactivation is in flight', async () => {
+    const wrapper = panel(41)
+
+    await wrapper.findAll('button')[1]!.trigger('click')
+
+    expect(wrapper.emitted('deactivate')).toBeUndefined()
   })
 })

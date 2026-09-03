@@ -76,11 +76,63 @@ describe('the profile form, filled in', () => {
   })
 
   it('clears a field the member emptied, rather than saving an empty string', async () => {
-    const wrapper = mount(ProfileForm, { ...attached, props: { member: SAM } })
+    const wrapper = mount(ProfileForm, {
+      ...attached,
+      props: { member: { ...SAM, desiredSkills: 'TIG welding' } },
+    })
 
     await wrapper.findAll('textarea')[1]!.setValue('   ')
     await click(wrapper, 'Save changes')
 
-    expect(wrapper.emitted('save')?.[0]?.[0]).toMatchObject({ desiredSkills: null })
+    expect(wrapper.emitted('save')?.[0]?.[0]).toEqual({ desiredSkills: null })
+  })
+})
+
+/**
+ * The form used to send all eleven fields on every save. A member imported from
+ * the Rails app can hold a skills answer longer than patchMeRequest accepts, and
+ * resending it unchanged took every unrelated edit down with it: they could not
+ * fix their phone number until they noticed a box they were not editing.
+ */
+describe('the profile form, saving', () => {
+  it('sends only what the member changed', async () => {
+    const wrapper = mount(ProfileForm, { ...attached, props: { member: SAM } })
+
+    await wrapper.get('input[autocomplete="tel"]').setValue('480 555 0199')
+    await click(wrapper, 'Save changes')
+
+    expect(wrapper.emitted('save')?.[0]?.[0]).toEqual({ phone: '480 555 0199' })
+  })
+
+  it('does not resend a stored answer that is longer than the API accepts', async () => {
+    const tooLong = 'a'.repeat(2400)
+    const wrapper = mount(ProfileForm, {
+      ...attached,
+      props: { member: { ...SAM, currentSkills: tooLong } },
+    })
+
+    await wrapper.get('input[autocomplete="postal-code"]').setValue('85202')
+    await click(wrapper, 'Save changes')
+
+    const sent = wrapper.emitted('save')?.[0]?.[0]
+    expect(sent).toEqual({ postalCode: '85202' })
+    expect(sent).not.toHaveProperty('currentSkills')
+  })
+
+  it('still sends a cleared field, because null is a change', async () => {
+    const wrapper = mount(ProfileForm, { ...attached, props: { member: SAM } })
+
+    await wrapper.get('input[autocomplete="tel"]').setValue('  ')
+    await click(wrapper, 'Save changes')
+
+    expect(wrapper.emitted('save')?.[0]?.[0]).toEqual({ phone: null })
+  })
+
+  it('bounds the skills boxes in the browser at what the schema accepts', () => {
+    const wrapper = mount(ProfileForm, { ...attached, props: { member: SAM } })
+
+    for (const box of wrapper.findAll('textarea')) {
+      expect(box.attributes('maxlength')).toBe('2000')
+    }
   })
 })

@@ -152,12 +152,22 @@ describe('CardAssignForm, filled in', () => {
     expect(wrapper.text()).toContain('Search name or email')
   })
 
-  it('narrows the list to what was searched, over name and email both', async () => {
+  it('narrows the list by name', async () => {
     const wrapper = form()
 
     await fill(wrapper, 'Search name or email', 'volkov')
 
     expect(optionLabels(wrapper, 'Member')).toEqual(['Pick a member', 'M. Volkov'])
+  })
+
+  it('narrows it by email too, which is how an admin finds a common name', async () => {
+    const wrapper = form()
+
+    // Only in the address. The name is "Sam Rivera", so a match here cannot
+    // have come from the name column.
+    await fill(wrapper, 'Search name or email', 'sam.rivera@')
+
+    expect(optionLabels(wrapper, 'Member')).toEqual(['Pick a member', 'Sam Rivera'])
   })
 
   it('will not review until a member is picked', async () => {

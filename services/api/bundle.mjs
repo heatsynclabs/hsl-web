@@ -22,8 +22,10 @@ await build({
   platform: 'node',
   format: 'esm',
   target: 'node24',
-  // nodemailer and several packages under better-auth are CommonJS and call
-  // require() as they load. An ESM bundle has no require, so one is made here.
+  // nodemailer and pg are CommonJS and call require() as they load. Every
+  // require left in the emitted bundle comes from one of them, fifty from
+  // nodemailer and twenty-five from pg and its helpers, and each resolves to a
+  // Node builtin. An ESM bundle has no require, so one is made here.
   banner: {
     js: "import { createRequire as hslCreateRequire } from 'node:module'\nconst require = hslCreateRequire(import.meta.url)",
   },
