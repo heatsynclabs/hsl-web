@@ -166,6 +166,17 @@ matched neither the firmware nor the parser.
     codec expected `NNN: tTTTTTTTT pMMM`. The blast radius written beside that
     assumption was exact: reconcile would have read an empty card table and
     rewritten all 64 cards every minute forever, clearing nothing.
+
+    That is worse than waste. `addUser` calls `EEPROM.write` unconditionally,
+    firmware line 1463, rather than the `update` that skips an unchanged byte,
+    so every pass spends a write cycle on all five bytes of all 64 cards.
+
+    ASSUMPTION: the ATmega328's EEPROM is rated near 100,000 write cycles.
+    CONFIRM BY: the ATmega328P datasheet, EEPROM endurance.
+    BLAST RADIUS: at 1,440 passes a day that region wears out in something like
+    two months, after which cards cannot be stored and nobody gets in. It would
+    present as a dead controller rather than as a software fault, so nobody
+    would look here for the cause.
 19. **Every status poll would have thrown.** The board prints `authok` before it
     runs a chained command, so the body is not a JSON document and
     `JSON.parse` over the whole of it fails. The door screens would have read
