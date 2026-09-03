@@ -192,9 +192,13 @@ pnpm dev
 pnpm check      # lint, typecheck, test
 ```
 
-651 tests. The ones that need a database read `DATABASE_URL` and skip with a
+691 tests. The ones that need a database read `DATABASE_URL` and skip with a
 message when it is not set. The door service tests run against a fake controller
 that speaks the real wire protocol, so they need no hardware.
+
+There is a simulated door controller in `services/door/src/simulator`, so the
+door service can be run and the whole card enrolment loop walked without the
+hardware. `services/door/README.md` has it.
 
 Adding something members sign in to is `docs/build-an-app.md`. The short version
 is to serve it on the members hostname, where the session already works, which

@@ -91,6 +91,52 @@ Rear unlock is refused, by the lab decision of 2018-02-22. The refusal is in
 | `PORT` | 8080 | the loopback port |
 | `RECONCILE_INTERVAL_SECONDS` | 60 | how often a pass runs |
 
+## Running it against a simulated controller
+
+There is a simulated board in `src/simulator`. It is the same in-memory board
+every test here runs against, served over HTTP, so the real adapter and the real
+transport can be driven without hardware. It runs from source and is in neither
+service image.
+
+```
+CONTROLLER_PASSWORD=1234 pnpm --filter @hsl/door simulator
+```
+
+Then, in another terminal, the door service pointed at it:
+
+```
+CONTROLLER_URL=http://127.0.0.1:8090 CONTROLLER_PASSWORD=1234 \
+  API_URL=http://127.0.0.1:3000 DOOR_TOKEN=<the token> \
+  pnpm --filter @hsl/door dev
+```
+
+The board answers the query protocol on `/`, so anything the service sends can
+also be sent by hand:
+
+```
+curl 'http://127.0.0.1:8090/?9&e=1234'                     # status
+curl 'http://127.0.0.1:8090/?m014&p001&t0001E240&e=1234'   # write a card
+curl 'http://127.0.0.1:8090/?a&e=1234'                     # the card table
+```
+
+Holding a card to the reader is the one thing the board has no command for, so
+the simulator has one of its own. It is under `/simulate` rather than `/`
+because it is not part of the protocol:
+
+```
+curl -X POST -H 'content-type: application/json' \
+  -d '{"cardNumber":"0004B1C7"}' http://127.0.0.1:8090/simulate/present
+curl http://127.0.0.1:8090/simulate/state
+```
+
+An unknown card comes back `denied` and lands in the log as the two halves the
+firmware splits a tag into, which is what the enrolment screen picks up. Write
+it to a slot and present it again and it comes back `granted`.
+
+The password is four hex characters because the board reads exactly four. See
+`docs/decisions/0014-a-simulated-controller.md` for what this proves and, more
+importantly, what it does not.
+
 ## Testing it
 
 ```
@@ -149,16 +195,22 @@ repository, and nothing imports it.
 
 ## What is written down as an assumption
 
-Three things nobody has confirmed against the live board yet. Each one is marked
-in the source with what confirms it and what it costs if it is wrong.
+The response formats are no longer among them. They were read out of
+`Open_Access_Control_Ethernet.ino` at commit 60e499c and written down in
+`docs/legacy-system.md` under "The response formats, read from the firmware",
+and both the codec and the simulated board follow that.
 
+What is still unconfirmed against the live board:
+
+- Whether the deployed board is that build at all. The repository has not been
+  pushed since 2013 and nothing here records a version read off the device.
+- Whether it was built with `DEBUG 2`. If not, `dumpUser` prints `********`
+  instead of the tag and no readback is possible.
 - The case the controller stores a tag in. Reconcile compares tags case
   insensitively so it cannot rewrite all 64 cards on every pass.
-- The exact shape of the `?a` card table dump, in
-  `adapters/openaccess-arduino/wire.ts`.
-- That commands other than card writes accept the chained `&e=PASS` form, and
-  that the board answers a command it will not run with a string containing
-  neither `ok` nor `cur`.
+- Whether the permission byte decides anything at the reader, which only the
+  simulator has an opinion about, in `simulator/present.ts`.
+
+`HANDOFF.md` section 6 carries these with the command that settles each.
 
 The three paths this service calls on the members API are named in `link.ts`.
-`services/api` is not written yet, so they are named there first.

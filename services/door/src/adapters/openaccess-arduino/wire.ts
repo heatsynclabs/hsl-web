@@ -96,49 +96,82 @@ export function isLoginAccepted(body: string): boolean {
   return body.includes(LOGIN_ACCEPTED)
 }
 
+/**
+ * A write or a clear the board carried out.
+ *
+ * The board frames both with a "cur:" line and prints the slot back underneath
+ * it. A slot above 199 answers "Bad user number!" in that position, firmware
+ * line 1560, and the body still contains "cur", so the substring on its own
+ * reports success for a write that can never open a door.
+ */
 export function isWriteAccepted(body: string): boolean {
-  return body.includes(WRITE_ACCEPTED)
+  return body.includes(WRITE_ACCEPTED) && !body.includes(BAD_USER_NUMBER)
 }
 
-/** The ?z log, parsed as "key: value" lines. G granted, R read, D denied. */
+/** dumpUser's refusal for a slot it cannot print, firmware 1560. */
+export const BAD_USER_NUMBER = 'Bad user number!'
+
+/**
+ * The ?z log. G granted, R read, D denied, with the lowercase partner carrying
+ * the high half of the same tag.
+ *
+ * printLog walks all forty slots whether or not they hold anything, firmware
+ * 1615 to 1625, and an unused slot prints its NUL key followed by ": 0". A NUL
+ * survives trim(), so entries are kept only for a printable key.
+ */
 export function parseLog(body: string): DoorLogEntry[] {
   const entries: DoorLogEntry[] = []
-  for (const line of body.split('\n')) {
+  for (const line of lines(body)) {
     const separator = line.indexOf(':')
     if (separator === -1) continue
     const key = line.slice(0, separator).trim()
     const value = line.slice(separator + 1).trim()
-    if (key !== '') entries.push({ key, value })
+    if (/^[A-Za-z]$/.test(key)) entries.push({ key, value })
   }
   return entries
 }
 
-/**
- * One line of the ?a dump or the whole answer to ?sNNN.
- *
- * ASSUMPTION: the dump prints one line per occupied slot as
- * "NNN: tTTTTTTTT pMMM" and anything else on the line is framing.
- * CONFIRM BY: running ?a against the controller in the lab and reading it.
- * BLAST RADIUS: reconcile would see an empty card table and rewrite all 64
- * cards on every pass. It would never clear anything, because a slot it cannot
- * read is a slot it does not know it owns.
- */
-const CARD_LINE = /^\s*(\d{1,3})\s*:\s*t([0-9A-Fa-f]{8})\s+p(\d{1,3})\s*$/
-
-export function parseCardLine(line: string): CardTableRow | null {
-  const match = CARD_LINE.exec(line)
-  if (match === null) return null
-  const [, slot, tag, permissions] = match
-  return {
-    slot: Number(slot),
-    cardNumber: (tag ?? '').toUpperCase(),
-    permissions: Number(permissions),
-  }
+/** Arduino's println writes CRLF, so a body split on \n alone keeps the \r. */
+export function lines(body: string): string[] {
+  return body.split(/\r?\n/)
 }
 
+/**
+ * One row of the ?a dump or of ?sNNN.
+ *
+ * dumpUser prints slot, then the permission mask, then the tag, separated by
+ * tabs and none of them padded, firmware 1545 to 1551. The mask comes before
+ * the tag. The tag is uppercase hex only because DEBUG is 2 at line 105: a
+ * board built with DEBUG 0 or 1 prints asterisks there and no readback is
+ * possible, which is HANDOFF section 6 item 3.
+ */
+const CARD_ROW = /^(\d{1,3})\t(\d{1,3})\t([0-9A-Fa-f]{1,8})$/
+
+/**
+ * checkUser refuses 0xFFFFFFFF and 0x0, firmware 1511, and deleteUser writes
+ * 0xFF across the slot, firmware 1483. Both read back as a row and neither is
+ * a card, so neither is one here.
+ */
+const EMPTY_TAGS = new Set(['FFFFFFFF', '00000000'])
+
+export function parseCardLine(line: string): CardTableRow | null {
+  const match = CARD_ROW.exec(line.trimEnd())
+  if (match === null) return null
+
+  const [, slot, permissions, tag] = match
+  const cardNumber = (tag ?? '').toUpperCase().padStart(8, '0')
+  if (EMPTY_TAGS.has(cardNumber)) return null
+
+  return { slot: Number(slot), cardNumber, permissions: Number(permissions) }
+}
+
+/**
+ * The occupied slots of a ?a dump. The board prints all two hundred every time,
+ * framed by a pre block and a header, so most rows are empty and are dropped.
+ */
 export function parseCardTable(body: string): CardTableRow[] {
   const cards: CardTableRow[] = []
-  for (const line of body.split('\n')) {
+  for (const line of lines(body)) {
     const card = parseCardLine(line)
     if (card !== null) cards.push(card)
   }

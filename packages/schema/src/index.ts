@@ -75,6 +75,7 @@ export {
   paymentStatusValue,
   postCardRequest,
   postPaymentRequest,
+  PROFILE_TEXT_LIMIT,
   signupRequest,
   signupResponse,
   signupTier,

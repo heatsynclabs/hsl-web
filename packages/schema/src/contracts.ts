@@ -29,7 +29,14 @@ export const paymentStatusValue = z.enum(paymentStatuses)
 const timestampValue = z.iso.datetime()
 const shortText = z.string().max(200)
 const phoneText = z.string().max(40)
-const longText = z.string().max(2000)
+/**
+ * The ceiling on the two free text profile fields. Exported because the members
+ * app bounds its own boxes at the same number, and a form that lets somebody
+ * write more than the route accepts loses their paragraph to a refusal.
+ */
+export const PROFILE_TEXT_LIMIT = 2000
+
+const longText = z.string().max(PROFILE_TEXT_LIMIT)
 
 export const errorResponse = z.object({
   error: z.string(),

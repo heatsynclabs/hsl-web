@@ -25,9 +25,11 @@ FROM node:24.20-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=build /repo/services/api/dist /app/dist
-# For "type": "module", so node reads the bundles as ESM. Nothing installs from
-# it and there is no node_modules in this image.
-COPY --from=build /repo/services/api/package.json /app/package.json
+# Node reads dist/*.js as ESM only if a package.json beside them says so. These
+# are the two fields it needs. Copying the service manifest instead would put a
+# dependency list and a script list in the image that nothing installs and
+# nothing runs, which reads as though they were part of the deployment.
+RUN printf '{"type":"module","private":true}' > /app/package.json
 # The public status document. Baked in rather than mounted, so there is no host
 # path that can be missing and leave the lab website reading a fallback.
 COPY infra/space_api.template.json /app/space_api.template.json

@@ -16,20 +16,20 @@ runs on a laptop under Docker Compose, and `README.md` is the instructions.
 | `packages/ui` | built | 28 tests, rendered in a browser in both themes |
 | `packages/api-client` | built | 14 tests |
 | `services/api` | built | 198 tests against a real Postgres |
-| `services/door` | built, never spoken to hardware | 125 tests against a fake controller |
-| `apps/members` | built | 55 tests, walked through in a browser |
+| `services/door` | built, never spoken to hardware | 145 tests, 12 of them over a socket against a simulated board |
+| `apps/members` | built | 66 tests, walked through in a browser |
 | `apps/signup` | built | 33 tests, walked through in a browser |
-| `apps/admin` | built | 172 tests, walked through in a browser |
+| `apps/admin` | built | 181 tests, walked through in a browser |
 | `tools/import` | built, run against the real dump | 23 tests, plus the run in section 2 |
 | Compose stack | runs | brought up from nothing, every URL answers |
 | Backup and restore | works | `tools/restore-drill.sh` passes, in CI |
 | Deployment | not started | no host exists yet, see section 5 |
 
-651 tests. Lint, typecheck and the voice check are clean.
+691 tests. Lint, typecheck and the voice check are clean.
 
-14,468 lines of TypeScript, Vue and build scripts, and 9,421 lines of tests,
+14,939 lines of TypeScript, Vue and build scripts, and 9,965 lines of tests,
 fixtures and harnesses, counted across `apps`, `packages`, `services` and
-`tools` with build output excluded. 22 routes, 13 ADRs. The previous attempt was
+`tools` with build output excluded. 22 routes, 14 ADRs. The previous attempt was
 50,941 lines and deployed nothing; the difference is almost entirely enforcement
 machinery that is not here on purpose.
 
@@ -153,6 +153,36 @@ point runs from the built image, every `require` in the emitted files resolves
 to a Node builtin, nothing about the build machine is baked in, and the bundles
 are byte reproducible.
 
+### The firmware, read at last
+
+Nobody had read `Open_Access_Control_Ethernet.ino` itself. It was fetched on
+2026-09-03 at commit 60e499c and read against this codebase, and it found three
+defects that would each have fired on the first day against real hardware. None
+was catchable before, because the in-memory board answered a dialect that
+matched neither the firmware nor the parser.
+
+18. **The card table dump was parsed with a regex the board can never match.**
+    `dumpUser` prints `slot`, mask, then tag, tab separated and unpadded. The
+    codec expected `NNN: tTTTTTTTT pMMM`. The blast radius written beside that
+    assumption was exact: reconcile would have read an empty card table and
+    rewritten all 64 cards every minute forever, clearing nothing.
+19. **Every status poll would have thrown.** The board prints `authok` before it
+    runs a chained command, so the body is not a JSON document and
+    `JSON.parse` over the whole of it fails. The door screens would have read
+    Unknown forever while the door itself worked.
+20. **A write to slot 200 reported success.** The board answers
+    `Bad user number!` in the readback position and the body still contains
+    `cur`, which is the substring the adapter took for acceptance.
+
+Two more, smaller: the password must be the four hex characters the board reads
+after `e=`, so the sketch's own `0x1234` would have been read as `0x12` and
+failed every request with nothing to say why; and the door service bound its
+port to the container's loopback, so the health check in `docs/operations.md`
+could never have answered on the lab host.
+
+`docs/legacy-system.md` now carries the response formats it never had, which is
+why the first version had to guess.
+
 ## 4. Facts that overrule the older documents
 
 `docs/legacy-system.md` has the full list with sources. The ones that changed
@@ -192,14 +222,20 @@ These block deployment, not development. None is technical.
 Nobody has been in front of the controller. Each is a five minute job with LAN
 access and each one changes code.
 
-1. **Dump the card table with `?a`.** Confirms whether slot 200 is really on the
-   device, and whether tags are stored upper or lower case.
+1. **Dump the card table with `?a`.** The format is now read from the firmware
+   and no longer a guess, so this confirms three narrower things: whether slot
+   200 is really on the device, whether tags come back upper or lower case, and
+   whether the deployed board answers the way this build does at all. The
+   repository has not been pushed since 2013 and nothing here records a version
+   read off the device.
 2. **Which physical door is controller door 1.** Getting it wrong opens the
    wrong door.
 3. **Whether the deployed firmware is the DEBUG build.** If not, `dumpUser`
    prints asterisks and readback verification is impossible.
 4. **The live `PRIVPASSWORD`, controller IP and MAC.** The committed `0x1234` is
-   the public example value.
+   the public example value, and the value to configure is the four hex
+   characters on their own, `1234`, not the C literal. The door service refuses
+   to start on anything else.
 5. **Whether `user_certifications` holds a duplicate pair.** No unique constraint
    was added because section 13 forbids one that rejects existing data.
 

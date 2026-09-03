@@ -18,9 +18,11 @@ FROM node:24.20-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=build /repo/services/door/dist /app/dist
-# For "type": "module", so node reads the bundle as ESM. Nothing installs from
-# it and there is no node_modules in this image.
-COPY --from=build /repo/services/door/package.json /app/package.json
+# Node reads dist/main.js as ESM only if a package.json beside it says so. These
+# are the two fields it needs. Copying the service manifest instead would put a
+# dependency list and a script list in the image that nothing installs and
+# nothing runs, which reads as though they were part of the deployment.
+RUN printf '{"type":"module","private":true}' > /app/package.json
 USER node
 EXPOSE 8080
 CMD ["node", "dist/main.js"]

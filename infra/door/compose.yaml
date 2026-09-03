@@ -13,6 +13,10 @@ services:
       CONTROLLER_PASSWORD_FILE: /run/secrets/controller_password
       API_URL: ${API_URL:?set API_URL, the public members API}
       DOOR_TOKEN_FILE: /run/secrets/door_token
+      # A container's own loopback is not reachable from the host, so binding
+      # 127.0.0.1 inside it makes the publish below answer nothing. The publish
+      # is what restricts this to the lab host.
+      HOST: 0.0.0.0
     secrets:
       - controller_password
       - door_token

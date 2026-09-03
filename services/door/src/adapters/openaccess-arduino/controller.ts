@@ -9,7 +9,6 @@ import {
   COMMAND_PARAMETERS,
   DUMP_CARD_TABLE_PARAMETER,
   isWriteAccepted,
-  parseCardLine,
   parseCardTable,
   parseLog,
   READ_LOG_PARAMETER,
@@ -74,7 +73,12 @@ export function createArduinoController(options: ArduinoControllerOptions): Door
 
     readCardTable: async () => parseCardTable(await send(DUMP_CARD_TABLE_PARAMETER)),
 
-    readCard: async (slot) => parseCardLine((await send(showSlotParameter(slot))).split('\n')[0] ?? ''),
+    /**
+     * ?sNNN answers with the chained login line, a pre block, a header and then
+     * the row. Reading the first line only would read "authok" every time, so
+     * the whole body is scanned the way the dump is.
+     */
+    readCard: async (slot) => parseCardTable(await send(showSlotParameter(slot)))[0] ?? null,
   }
 }
 

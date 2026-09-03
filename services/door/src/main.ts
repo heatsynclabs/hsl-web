@@ -171,8 +171,10 @@ async function main(): Promise<void> {
   })
   const app = createApp({ controller, doorToken: config.doorToken })
 
-  serve({ fetch: app.fetch, port: config.port, hostname: '127.0.0.1' })
-  console.log(`door: listening on 127.0.0.1:${config.port}, controller at ${config.controllerUrl}`)
+  serve({ fetch: app.fetch, port: config.port, hostname: config.host })
+  console.log(
+    `door: listening on ${config.host}:${config.port}, controller at ${config.controllerUrl}`,
+  )
 
   const link = createApiLink({ apiUrl: config.apiUrl, doorToken: config.doorToken })
   startLoop({ controller, link, ownedSlots: new Set<number>() }, config.reconcileIntervalSeconds)

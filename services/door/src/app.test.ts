@@ -98,7 +98,9 @@ describe('driving the door', () => {
 
     expect(device.frontLocked).toBe(true)
     expect(device.rearLocked).toBe(true)
-    expect(device.armed).toBe(255)
+    // armAlarm(1), firmware 518. The board does not use 255 for armed; that is
+    // only what an uncommissioned EEPROM reads back at boot.
+    expect(device.armed).toBe(1)
   })
 
   it('refuses something that is not a door command', async () => {

@@ -43,6 +43,11 @@ interface CheckResult {
 const HIGHEST_WRITABLE_SLOT = 200
 const HIGHEST_READABLE_SLOT = 199
 
+// PROFILE_TEXT_LIMIT in @hsl/schema, the ceiling patchMeRequest puts on the two
+// free text profile fields. Repeated here rather than imported because this tool
+// stands alone, the same way HIGHEST_WRITABLE_SLOT above repeats the firmware's.
+const PROFILE_TEXT_LIMIT = 2000
+
 // Devise wrote $2a$. bcryptjs also reads the $2b$ and $2y$ variants.
 const KNOWN_HASH_PREFIXES = ['$2a$', '$2b$', '$2y$']
 
@@ -144,6 +149,29 @@ function checkMemberCredentials(users: LegacyUser[]): Finding[] {
       detail: 'The pointer is dropped and the orientation date is kept.',
     }),
   ]
+}
+
+/**
+ * The columns are unbounded text on both sides and the import copies what Rails
+ * held, but the members app refuses to send more than PROFILE_TEXT_LIMIT back.
+ * A member carrying more keeps it and reads it, and everything else on their
+ * profile still saves, but that one box has to be shortened before it can be
+ * changed. Worth naming before cutover rather than discovering it from a member.
+ */
+function checkProfileText(users: LegacyUser[]): Finding[] {
+  const tooLong = (value: string | null) => (value ?? '').length > PROFILE_TEXT_LIMIT
+
+  return report({
+    severity: 'notice',
+    check: 'skills answer longer than the profile form accepts',
+    ids: users
+      .filter((row) => tooLong(row.currentSkills) || tooLong(row.desiredSkills))
+      .map((row) => row.id),
+    detail:
+      `The text is imported whole and nothing is lost. Over ${PROFILE_TEXT_LIMIT} characters ` +
+      'the member has to shorten that one box before they can change it, and the rest of their ' +
+      'profile saves as normal.',
+  })
 }
 
 function unreadableNumber(row: LegacyCard): boolean {
@@ -337,6 +365,7 @@ export function preflight(snapshot: LegacySnapshot): Finding[] {
   return [
     ...checkMemberIdentity(snapshot.users),
     ...checkMemberCredentials(snapshot.users),
+    ...checkProfileText(snapshot.users),
     ...checkCardNumbers(snapshot.cards, userIds),
     ...checkCardSlots(snapshot.cards),
     ...checkCertifications(snapshot, userIds),

@@ -57,11 +57,15 @@ describe('the fake board on the wire', () => {
     expect(device.privileged).toBe(false)
   })
 
-  it('answers a bare login with ok and stays privileged, which is why nothing sends one', () => {
+  it('answers a bare login with authok and stays privileged, which is why nothing sends one', () => {
     const { device } = connect()
-    expect(device.handle('?e=1234')).toContain('ok')
+
+    expect(device.handle('?e=1234')).toContain('authok')
     expect(device.privileged).toBe(true)
-    expect(device.handle('?e=0000')).toContain('ok')
+
+    // 0000 is the logout value, firmware 617, and it is not the password, so
+    // login() takes the failing branch and says so.
+    expect(device.handle('?e=0000')).toContain('authfail')
     expect(device.privileged).toBe(false)
   })
 
@@ -71,9 +75,17 @@ describe('the fake board on the wire', () => {
     expect(device.handle('?m020&p001&t0001E240')).not.toContain('cur')
   })
 
-  it('answers ?9 with the payload the firmware sends', () => {
+  /**
+   * The board prints authok before it runs the command, so the body is not
+   * JSON. Parsing the whole of it is what services/door/src/domain/status.ts
+   * used to do, and it threw on every poll.
+   */
+  it('answers ?9 with the login line and then the payload the firmware sends', () => {
     const { device } = connect()
-    expect(JSON.parse(device.handle('?9&e=1234'))).toEqual({
+    const body = device.handle('?9&e=1234')
+
+    expect(body.startsWith('authok\r\n')).toBe(true)
+    expect(JSON.parse(body.slice(body.indexOf('{')))).toEqual({
       armed: 255,
       activated: 255,
       alarm_3: 1,
@@ -83,12 +95,31 @@ describe('the fake board on the wire', () => {
     })
   })
 
-  it('accepts a write to slot 200 and never reads it back, exactly as the firmware does', async () => {
+  it('answers an unprivileged ?9 with the payload and no login line', () => {
+    const { device } = connect()
+    const body = device.handle('?9')
+
+    expect(body).not.toContain('authok')
+    expect(JSON.parse(body)).toMatchObject({ armed: 255 })
+  })
+
+  /**
+   * The trap at slot 200. addUser accepts it and writes past the end of a 1024
+   * byte EEPROM, firmware 1451, while dumpUser refuses to print anything above
+   * 199, firmware 1532. So the board answers "Bad user number!" in the cur:
+   * position and the body still contains "cur", which is what the adapter used
+   * to read as success. A write nobody can read back is not a write.
+   */
+  it('refuses a write to slot 200, which the reader could never see', async () => {
     const { device, adapter } = connect()
 
-    await adapter.writeCard(CARD_SLOT_COUNT, 1, '00ABCDEF')
-    expect(device.cards.get(CARD_SLOT_COUNT)).toMatchObject({ cardNumber: '00ABCDEF' })
+    await expect(adapter.writeCard(CARD_SLOT_COUNT, 1, '00ABCDEF')).rejects.toThrow(
+      /card table was not changed/,
+    )
 
+    // The board did store it, up there where nothing reads it. That is the
+    // firmware's behaviour and the reason the refusal above matters.
+    expect(device.cards.get(CARD_SLOT_COUNT)).toMatchObject({ cardNumber: '00ABCDEF' })
     expect(await adapter.readCard(CARD_SLOT_COUNT)).toBeNull()
     expect(await adapter.readCardTable()).not.toContainEqual(
       expect.objectContaining({ slot: CARD_SLOT_COUNT }),

@@ -80,6 +80,29 @@ describe('preflight', () => {
     expect(refusals(found, false)).toEqual([])
   })
 
+  /**
+   * The response contract has no maximum, the column is unbounded text and the
+   * import copies what Rails held, but patchMeRequest caps the two free text
+   * fields. So the import can write a row the profile form cannot resend, and
+   * the operator should hear about it before cutover rather than a member
+   * discovering it.
+   */
+  it('reports a skills answer longer than the profile form accepts, without refusing it', () => {
+    const users = [member(1, { currentSkills: 'x'.repeat(2001) })]
+    const found = preflight(snapshot({ users }))
+
+    expect(checks(found)).toContain('skills answer longer than the profile form accepts')
+    expect(refusals(found, false)).toEqual([])
+  })
+
+  it('says nothing about a skills answer that fits', () => {
+    const users = [member(1, { currentSkills: 'x'.repeat(2000), desiredSkills: 'MIG welding' })]
+
+    expect(checks(preflight(snapshot({ users })))).not.toContain(
+      'skills answer longer than the profile form accepts',
+    )
+  })
+
   it('reports the card at slot 200 without refusing it', () => {
     const cards = [{ id: 200, cardNumber: 'beef01', permissions: 1, userId: 1, label: null }]
     const found = preflight(snapshot({ cards }))

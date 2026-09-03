@@ -38,14 +38,27 @@ export function parseStatus(body: string): DoorStatus {
   })
 }
 
+/**
+ * The status document out of a response body.
+ *
+ * Every command this service sends chains the login onto it, and the board
+ * prints "authok" before it runs the command, firmware line 349. So a chained
+ * ?9 answers "authok" and then the payload, and parsing the whole body throws
+ * on the very first character. The document is taken from the first brace to
+ * the last instead.
+ */
 function parseJson(body: string): unknown {
+  const start = body.indexOf('{')
+  const end = body.lastIndexOf('}')
+  if (start === -1 || end < start) return null
+
   try {
-    return JSON.parse(body)
+    return JSON.parse(body.slice(start, end + 1))
   } catch {
     return null
   }
 }
 
 function firstLine(body: string): string {
-  return body.split('\n')[0]?.trim().slice(0, 120) ?? ''
+  return body.split(/\r?\n/)[0]?.trim().slice(0, 120) ?? ''
 }

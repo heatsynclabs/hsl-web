@@ -7,8 +7,8 @@
       <Field v-model="draft.emergencyName" label="Emergency contact" />
       <Field v-model="draft.emergencyPhone" label="Emergency phone" type="tel" />
       <Field v-model="draft.emergencyEmail" label="Emergency email" type="email" />
-      <Field v-model="draft.currentSkills" label="Skills you have" :rows="4" :maxlength="SKILLS_LIMIT" />
-      <Field v-model="draft.desiredSkills" label="Skills you want" :rows="4" :maxlength="SKILLS_LIMIT" />
+      <Field v-model="draft.currentSkills" label="Skills you have" :rows="4" :maxlength="PROFILE_TEXT_LIMIT" />
+      <Field v-model="draft.desiredSkills" label="Skills you want" :rows="4" :maxlength="PROFILE_TEXT_LIMIT" />
 
       <fieldset class="profile-form__toggles">
         <legend class="profile-form__legend">Who can see this</legend>
@@ -46,6 +46,7 @@
 
 <script setup lang="ts">
 import type { MemberSelf, PatchMeRequest } from '@hsl/schema'
+import { PROFILE_TEXT_LIMIT } from '@hsl/schema'
 import { Button, ButtonRow, Card, Field, Note } from '@hsl/ui'
 import { reactive } from 'vue'
 
@@ -58,9 +59,6 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), { saving: false, error: '' })
 const emit = defineEmits<{ save: [changes: PatchMeRequest]; cancel: [] }>()
 
-// What longText in @hsl/schema accepts. The box stops here so a member does not
-// write a paragraph and then meet a refusal; patchMeRequest is still the rule.
-const SKILLS_LIMIT = 2000
 
 const draft = reactive({
   name: props.member.name,

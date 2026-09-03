@@ -125,16 +125,50 @@ describe('reading the answers', () => {
     ])
   })
 
+  /**
+   * The real shape of a ?a body, read from dumpUser at firmware 1545 to 1551:
+   * the chained login line, a pre block, a header, then every slot from 0 to
+   * 199 as slot, mask and tag separated by tabs and none of them padded.
+   */
   it('reads a card table dump and skips whatever frames it', () => {
-    const dump = ['users:', '014: t0001E240 p001', '199: t00ABCDEF p255', ''].join('\n')
+    const dump = [
+      'authok',
+      '<pre>',
+      'UserNum: Usermask: TagNum:',
+      '0\t255\tFFFFFFFF',
+      '14\t1\t1E240',
+      '15\t255\tFFFFFFFF',
+      '199\t255\tABCDEF',
+      '</pre>',
+      '',
+    ].join('\r\n')
+
     expect(parseCardTable(dump)).toEqual([
       { slot: 14, cardNumber: '0001E240', permissions: 1 },
       { slot: 199, cardNumber: '00ABCDEF', permissions: 255 },
     ])
   })
 
-  it('reads an empty slot as no card', () => {
-    expect(parseCardLine('014: empty')).toBeNull()
+  /**
+   * The board prints all two hundred slots every time. An unwritten one reads
+   * back as the erased EEPROM, and checkUser refuses that tag anyway at
+   * firmware 1511, so it is not a card here either.
+   */
+  it('reads an erased slot as no card, whichever way it was erased', () => {
+    expect(parseCardLine('14\t255\tFFFFFFFF')).toBeNull()
+    expect(parseCardLine('14\t0\t0')).toBeNull()
+  })
+
+  it('pads a short tag to the width the rest of this system uses', () => {
+    expect(parseCardLine('14\t1\tC8C8')).toEqual({
+      slot: 14,
+      cardNumber: '0000C8C8',
+      permissions: 1,
+    })
+  })
+
+  it('keeps the carriage return out of the tag, because the board writes CRLF', () => {
+    expect(parseCardLine('14\t1\t1E240\r')).toMatchObject({ cardNumber: '0001E240' })
   })
 })
 

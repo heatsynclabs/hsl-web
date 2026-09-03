@@ -250,6 +250,86 @@ does not. Confirm against the live device with `?a`, move the card to a free slo
 below 200, and treat 0 through 199 as the usable range everywhere in the new
 system.
 
+### The response formats, read from the firmware
+
+Everything above records the protocol as Rails drives it. It does not record
+what the board writes back, which is why the first replacement had to guess and
+guessed wrong. Read from `Open_Access_Control_Ethernet.ino` on master, commit
+60e499c, on 2026-09-03. Every line is CRLF terminated, because Arduino's
+`println` writes both.
+
+**Login runs before the command.** Line 349 prints `authok`, line 352 prints
+`authfail` and then breaks the connection loop, so a failed login answers that
+and nothing else. Every chained request therefore begins with `authok`, and a
+body is not the command's output on its own.
+
+**`?a` prints all two hundred slots, every time.** Lines 401 to 412 wrap the
+dump in `<pre>` and a header line `UserNum: Usermask: TagNum:`, then call
+`dumpUser` for slots 0 through 199. `dumpUser`, lines 1545 to 1551, prints
+
+```
+<slot>	<permission mask>	<tag in hex>
+```
+
+Tab separated, mask before tag, and none of the three padded. The tag is
+uppercase hex only because `#define DEBUG 2` at line 105: a board built with
+DEBUG 0 or 1 prints `********` there instead, which is the unknown in section 6
+of `HANDOFF.md`. An unwritten slot reads back as the erased EEPROM,
+`255` and `FFFFFFFF`, and `checkUser` refuses that tag at line 1511, so it is
+not a card.
+
+**`?sNNN` is the same header and one row**, lines 361 to 374. There is no empty
+marker: an unwritten slot prints its erased row. A slot above 199 prints
+`Bad user number!`, line 1560.
+
+**`?m` and `?r` frame the write with a readback.** Lines 375 to 400 print
+`<pre>`, `prev:`, the row before, `cur:`, the row after, `</pre>`. `?r` prints
+`r` first and never closes its `<pre>`, lines 414 to 426. A write to slot 200 is
+accepted by `addUser`, whose guard is `userNum > NUMUSERS`, and then printed as
+`Bad user number!` in both positions, so **the body still contains `cur` for a
+write the reader can never see**.
+
+**`?9` needs no password.** Lines 605 to 612 answer it in the branch that runs
+when privilege mode is off, so an unauthenticated `?9` is the bare document and
+a chained one is `authok` and then the document. Its six keys are in the order
+`armed`, `activated`, `alarm_3`, `alarm_2`, `door_1_locked`, `door_2_locked`,
+lines 1589 to 1604, with `alarm_3` before `alarm_2`.
+
+**`?z` prints forty lines whether or not they hold anything**, lines 1615 to
+1625, because it walks `sizeof(logKeys)`. An unused slot prints a NUL byte, then
+`: 0`. `?y` answers `y`, line 539.
+
+**A command with no privilege** answers `<a href='/'>Not logged in.</a>`, the
+`noauth` literal at line 256. An unknown command answers nothing at all: the
+switch's `default` at line 601 is empty, so a chained unknown command answers
+just `authok`, which contains the substring `ok`.
+
+**The other literals**, lines 258 to 262: `Unlocked all.`, `Unlocked 1.`,
+`Unlocked 2.`, `Opened 1.`, `Opened 2.`, `Locked all.`. `?o` prints its literal
+and stops. `?u` and `?l` print theirs and then the status document, and locking
+one door prints no literal at all.
+
+### The password is four hex characters
+
+Line 346 reads exactly four characters after `e=` into a five byte buffer and
+line 348 parses them with `strtoul(pass, NULL, 16)`, against
+`#define PRIVPASSWORD 0x1234` at line 112. So the value to send is `1234`. Send
+the sketch's own literal `0x1234` and the board reads `0x12`, which is 18, and
+answers `authfail` with nothing to say why. `0000` is the value the chained
+logout sends, line 617, so it can never be a working password.
+
+Five failed logins inside five minutes lock privilege mode out for five minutes,
+lines 1564 to 1568. The chained logout runs the failing branch and increments
+that counter, and a success resets it, so the normal cycle never trips it.
+
+### Commands block the board for seconds at a time
+
+`chirpAlarm` is a synchronous loop of 300 ms per chirp, lines 952 to 960. `?2`
+arm calls it twenty times, line 517, so arming takes about six seconds to
+answer. `?u=1`, `?u=2`, `?l=1` and `?l=2` chirp three times. `checkUser` waits a
+second on a miss, line 1519. The board is single threaded and answers nothing
+else while it waits.
+
 ### The 32767 divisor is not card matching
 
 The infrastructure audit says card numbers are matched at the reader as
