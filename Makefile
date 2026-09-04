@@ -1,4 +1,4 @@
-.PHONY: up down logs secrets seed reset backup restore check import legacy-restore admin
+.PHONY: up down logs secrets seed reset backup restore check import legacy-restore admin hooks
 
 # The whole stack in Docker: database, API, the three apps behind Caddy, and a
 # mail catcher. Reads .env. See README.md.
@@ -75,3 +75,11 @@ restore:
 
 check:
 	pnpm check
+
+# Points git at .githooks, which nothing else does, so a fresh clone gets the
+# commit message check. CI runs the same script over every commit in a pull
+# request, which is the half that holds when this has not been run.
+hooks:
+	git config core.hooksPath .githooks
+	@echo "commit hooks enabled from .githooks"
+

@@ -25,8 +25,9 @@ Assisted-By:
 AI-Generated:
 ```
 
-*Gate:* `.githooks/commit-msg` locally, the same check in CI over every commit in
-a pull request.
+*Gate:* `.githooks/commit-msg`, enabled locally with `make hooks` and run by CI
+over every commit in a pull request. CI is the half that holds: a local hook runs
+only for somebody who enabled it and did not pass `--no-verify`.
 
 ## 2. Never assume
 

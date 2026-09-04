@@ -120,6 +120,25 @@ describeDatabase('the audit log', () => {
       expect(rows[0]?.action).toBe('card.update')
     })
 
+    /**
+     * A reassignment moves a card that has been opening the building for
+     * somebody. The audit log is what stands in for a second admin approving
+     * it, so it has to say who lost the card as well as who gained it.
+     */
+    it('names the member a reassigned card was taken from', async () => {
+      await addCard(harness, target.member.id, 14, '0000000E')
+
+      await client.api.cards[':id'].$patch(
+        { param: { id: '14' }, json: { userId: instructor.member.id } },
+        { headers: admin.headers },
+      )
+
+      const rows = await auditRows()
+      expect(rows).toHaveLength(1)
+      expect(rows[0]?.targetId).toBe(instructor.member.id)
+      expect(rows[0]?.detail).toMatchObject({ previousUserId: target.member.id })
+    })
+
     it('records a certification grant and a revoke separately', async () => {
       await addCertification(harness)
 

@@ -18,11 +18,15 @@ also requires the schema to be rebuilt from nothing on every run.
 
 ## Decision
 
-A `db` service in the development Compose file. A Vitest `globalSetup` creates a
-fresh database and runs `drizzle-kit migrate` against it.
+A `db` service in the development Compose file. A Vitest `globalSetup` drops the
+schema in the database `DATABASE_URL` names, recreates it, and runs the
+migrations against it.
 
-Workers share one server, so each Vitest worker gets its own database created
-with `CREATE DATABASE ... TEMPLATE` from a migrated template.
+One database, not one per worker. The per-worker database with
+`CREATE DATABASE ... TEMPLATE` was written down here and never built, and what
+keeps two suites from truncating each other's rows is `fileParallelism: false`
+in `services/api/vitest.config.ts`. That is slower and it is one concept rather
+than two, which is what this decision was about.
 
 ## Consequence
 

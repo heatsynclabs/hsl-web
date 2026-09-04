@@ -30,6 +30,50 @@ const BCRYPT_COST = 10
 
 export type Auth = ReturnType<typeof createAuth>
 
+/** Where app.ts mounts better-auth, and what basePath below tells it. */
+export const AUTH_BASE_PATH = '/api/auth'
+
+/**
+ * The better-auth routes this system serves. Everything else it mounts under
+ * AUTH_BASE_PATH is answered 404 by app.ts.
+ *
+ * 1.7.2 exposes about thirty endpoints from the emailAndPassword configuration
+ * alone, and apps/members/src/lib/auth.ts calls four of them. Two of the rest
+ * write to the member row: /update-user sets name and image with no length of
+ * its own, past the 200 characters patchMeRequest allows, and /sign-up/email
+ * creates a member with no waiver row, which POST /api/signup is the only code
+ * that writes. Neither is a route this system means to have, and neither was
+ * refused while the handler was mounted as a bare wildcard.
+ *
+ * An allow list rather than better-auth's own disabledPaths, because a deny
+ * list has to be re-read against every upgrade and an endpoint added upstream
+ * would be served the day it arrived.
+ *
+ * POST /api/signup calls auth.api.signUpEmail directly. That does not go
+ * through better-auth's router, so joining is unaffected. Read from
+ * dist/api/index.mjs, where the router is the only thing that reads a path.
+ */
+const SERVED_AUTH_PATHS = new Set([
+  '/sign-in/email',
+  '/sign-out',
+  '/request-password-reset',
+  '/reset-password',
+])
+
+/** The GET the emailed reset link lands on. Its token is a path segment. */
+const RESET_PASSWORD_CALLBACK = /^\/reset-password\/[^/]+$/
+
+/**
+ * Whether a request under AUTH_BASE_PATH is one better-auth should see.
+ *
+ * The path is taken from a parsed URL so that a dot segment is resolved before
+ * it is matched: /api/auth/reset-password/../update-user reached update-user.
+ */
+export function servesAuthRequest(url: string): boolean {
+  const path = new URL(url).pathname.slice(AUTH_BASE_PATH.length)
+  return SERVED_AUTH_PATHS.has(path) || RESET_PASSWORD_CALLBACK.test(path)
+}
+
 /**
  * Chosen rather than defaulted. better-auth turns rate limiting on only in
  * production and allows 100 requests per 10 seconds, which is generous
@@ -73,7 +117,7 @@ export function createAuth(db: Database, config: Config, mailer: Mailer = create
   return betterAuth({
     appName: 'HeatSync Labs',
     baseURL: config.publicOrigin,
-    basePath: '/api/auth',
+    basePath: AUTH_BASE_PATH,
     secret: config.authSecret,
     database: drizzleAdapter(db, { provider: 'pg', schema, transaction: true }),
     // Caddy serves the three apps and proxies /api on this one origin, so the

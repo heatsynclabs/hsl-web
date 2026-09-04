@@ -39,6 +39,32 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
 
+  # Section 1 of CONTRIBUTING.md says this check runs locally and in CI. Only
+  # the local half existed, and a local hook runs only for somebody who set
+  # core.hooksPath and did not pass --no-verify. This is the half that holds.
+  #
+  # It calls .githooks/commit-msg rather than repeating the pattern, so there is
+  # one implementation of the rule and not two that can drift.
+  commit-messages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - run: |
+          base='${{ github.event.pull_request.base.sha }}'
+          head='${{ github.event.pull_request.head.sha || github.sha }}'
+          if [ -n "$base" ]; then range="$base..$head"; else range='-1 '"$head"; fi
+          failed=0
+          for commit in $(git rev-list $range); do
+            git log -1 --format=%B "$commit" > /tmp/commit-msg
+            if ! .githooks/commit-msg /tmp/commit-msg; then
+              echo "  in commit $commit" >&2
+              failed=1
+            fi
+          done
+          exit $failed
+
   build:
     runs-on: ubuntu-latest
     steps:

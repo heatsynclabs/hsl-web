@@ -131,17 +131,21 @@ async function updateCard(
     return { status: 404, reason: 'That member does not exist. The card was left as it was.' }
   }
 
+  const [before] = await deps.db.select().from(cards).where(eq(cards.id, slot.data)).limit(1)
+  if (before === undefined) return { status: 404, reason: `No card is in slot ${slot.data}.` }
+
   // The slot itself is not in the request schema, so no edit can renumber it.
   const updated = await deps.db.update(cards).set(request).where(eq(cards.id, slot.data)).returning()
   const card = updated[0]
   if (card === undefined) return { status: 404, reason: `No card is in slot ${slot.data}.` }
 
-  await recordAudit(deps.db, {
-    actorId,
-    action: 'card.update',
-    targetId: card.userId,
-    detail: { slot: card.id, ...request },
-  })
+  const detail: Record<string, unknown> = { slot: card.id, ...request }
+  // A reassignment takes a card off somebody it has been opening the building
+  // for. This log stands in for a second admin approving that, so it has to
+  // name who lost the card and not only who gained it.
+  if (card.userId !== before.userId) detail.previousUserId = before.userId
+
+  await recordAudit(deps.db, { actorId, action: 'card.update', targetId: card.userId, detail })
 
   return { card: { card: cardView(card), memberHasCardAccess: await hasCardAccess(deps.db, card.userId) } }
 }

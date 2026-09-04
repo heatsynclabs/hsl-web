@@ -15,7 +15,7 @@ runs on a laptop under Docker Compose, and `README.md` is the instructions.
 | `packages/schema` | built | 26 tests, 4 migrations applied to a real Postgres |
 | `packages/ui` | built | 28 tests, rendered in a browser in both themes |
 | `packages/api-client` | built | 14 tests |
-| `services/api` | built | 198 tests against a real Postgres |
+| `services/api` | built | 207 tests against a real Postgres |
 | `services/door` | built, never spoken to hardware | 145 tests, 12 of them over a socket against a simulated board |
 | `apps/members` | built | 66 tests, walked through in a browser |
 | `apps/signup` | built | 33 tests, walked through in a browser |
@@ -25,7 +25,7 @@ runs on a laptop under Docker Compose, and `README.md` is the instructions.
 | Backup and restore | works | `tools/restore-drill.sh` passes, in CI |
 | Deployment | not started | no host exists yet, see section 5 |
 
-691 tests. Lint, typecheck and the voice check are clean.
+700 tests. Lint, typecheck and the voice check are clean.
 
 14,939 lines of TypeScript, Vue and build scripts, and 9,965 lines of tests,
 fixtures and harnesses, counted across `apps`, `packages`, `services` and
@@ -194,6 +194,78 @@ could never have answered on the lab host.
 `docs/legacy-system.md` now carries the response formats it never had, which is
 why the first version had to guess.
 
+### The routes nobody had counted
+
+`services/api` authorization was attacked rather than confirmed on 2026-09-03:
+privilege escalation, IDOR on `/api/members/:id`, mass assignment on both PATCH
+bodies, an instructor granting to themself, the door credential, and the
+append-only tables. Every route in `docs/architecture.md` held. The strict
+request schemas do close the Rails `attr_accessible` defect: `admin`,
+`memberLevel`, `orientation` and `cardAccess` are each refused with a 400 on
+`PATCH /api/me`, and no role reached a route it should not.
+
+The hole was beside them, on the surface nobody had listed.
+
+21. **better-auth mounted about thirty routes and this system calls five.**
+    `app.ts` handed the whole of `/api/auth/*` to `deps.auth.handler`, so every
+    endpoint the 1.7.2 `emailAndPassword` configuration builds was served to the
+    internet. Two of them write to the member row, which is the table the strict
+    contracts in `@hsl/schema` exist to protect.
+
+    `POST /api/auth/sign-up/email` creates a member with no waiver row, no
+    waiver timestamp and no dues tier, and signs the caller in. `POST /api/signup`
+    is the only code that records the release, so the one field that says whether
+    a person accepted it stopped meaning anything.
+
+    `POST /api/auth/update-user` writes `name` and `image` with no length of its
+    own. Reproduced against the running stack: a signed-in member with no
+    orientation, no card and no role set a 2,000,000 character name, and
+    `GET /api/members` went from about a kilobyte to two megabytes for every
+    oriented member who opened the directory. `PATCH /api/me` refuses the same
+    name at 200 characters. `image` is a column no contract lets anyone write at
+    all. A 4 MB body was accepted, and nothing in Caddy, Hono or the route sets a
+    request size limit.
+
+    `/api/auth/reset-password/../update-user` reached `update-user`, because
+    nothing resolved the dot segment before the wildcard matched.
+
+    `app.ts` now serves an allow list of the five paths this system calls, taken
+    from a parsed URL so a dot segment is resolved first, and answers 404 for
+    everything else. It is an allow list rather than better-auth's own
+    `disabledPaths` because a deny list has to be re-read against every upgrade.
+    `POST /api/signup` calls `auth.api.signUpEmail` directly, which does not go
+    through better-auth's router, so joining is unaffected. Checked over real
+    HTTP, not only in process.
+
+    Each of the five served paths has a case of its own, because
+    `password-reset.test.ts` drives `auth.api` and so proves the library works
+    and nothing about whether a browser can reach it. Narrowing the allow list
+    to sign in alone was watched failing all four of the others.
+22. **The attribution gate in CI had never existed.** Section 1 of
+    `CONTRIBUTING.md` said the commit message check runs locally and in CI. CI
+    had four jobs and none of them read a commit message. The local half was not
+    installed either: nothing in the repository sets `core.hooksPath`, so a
+    fresh clone runs no hook, which was confirmed by cloning. Same shape as
+    findings 3 and 16. There is a `commit-messages` job now, calling
+    `.githooks/commit-msg` rather than repeating its pattern, watched refusing a
+    planted `Co-Authored-By` trailer and a planted em dash and passing a clean
+    message. `make hooks` enables the local half.
+23. **A reassigned card left no record of who lost it.** `PATCH /api/cards/:id`
+    accepts a new `userId`, and the audit row recorded the slot and the new
+    owner only. `member.update` records `previous` for exactly this reason. The
+    log is what stands in for two-admin approval under
+    decisions/0008-single-admin-plus-audit-log.md, and it could not answer who
+    held slot 38 last month. It records `previousUserId` now.
+
+The five gates were broken on purpose and each was watched catching it:
+`max-lines-per-function` at 53 lines, `complexity` at 11, `max-params` at 5 and
+`max-depth` at 5 all report and `eslint` exits 1; the boundaries policy reports
+an app importing a service both with and without a file extension, an app
+importing `@hsl/api` by name, an app importing another app, a service importing
+a service, a service importing an app, and a package importing a service; the
+voice check fails `pnpm lint` on a planted emoji and a planted banned word in a
+tracked file. The CI workflow's own scripts were run rather than read.
+
 ## 4. Facts that overrule the older documents
 
 `docs/legacy-system.md` has the full list with sources. The ones that changed
@@ -310,6 +382,20 @@ Beyond section 3. None of these is hidden in the code.
   case, which it does not; that sentence has been corrected rather than the
   code. The fix is two small changes: refuse an `smtp://mail:` URL when the
   origin is https, and put the mail service behind a compose profile.
+- **Section 12 says door logs are readable by the member they concern, and no
+  route lets a member read theirs.** `GET /api/door/events` is admin only, which
+  satisfies the "nobody else" half and not the first one. Deciding whether to
+  build that route is a small piece of work nobody has taken.
+- Three privileged routes have no refusal test, against section 4 of
+  `CONTRIBUTING.md`: `POST /api/door/sync` and `GET /api/door/events` have no
+  authorization test at all, and `DELETE /api/members/:id` has one for a member
+  and none for anonymous. All three are `requireAdmin` and were checked by hand
+  against every role, so the rules hold. The tests do not exist.
+- The boundaries gate does not enforce the last rule in section 5. An app
+  importing `packages/schema/src/tables.ts` directly, by relative path or by
+  subpath, passes lint: the dependency direction is checked and "a package
+  exports through its index" is not. `boundaries/entry-point` is the rule that
+  would, and it is not configured. Nothing in the tree violates it today.
 - `/space_api.json` has never been proven byte for byte against the live one.
   `README.md` says parity gets proven on a test hostname before the hostname
   moves, and nothing does that yet. The lab website and an ESP8266 status LED
