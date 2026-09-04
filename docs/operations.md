@@ -32,9 +32,14 @@ session cookie is checked against it, so a mismatch refuses every sign in with
 "invalid origin" and nothing in the logs says why.
 
 Then put the real SMTP URL in `secrets/smtp_url`. `make secrets` writes a
-placeholder pointing at the development mail catcher, and the API refuses to
-start on https while it is still that, because password reset is the only way in
-for a member with no password.
+placeholder pointing at the development mail catcher.
+
+Nothing checks that you did. The API refuses to start on https with no SMTP URL
+at all, and the placeholder is a URL, so it starts. The mail catcher runs on
+this host too, so the send succeeds and every password reset lands in an inbox
+nobody reads. Password reset is the only way in for the 31 imported members who
+have never had a password. Replace the file, then prove it: ask for a reset for
+an address you control and read the mail. See `HANDOFF.md` section 7.
 
 `make up` is `docker compose up -d --build`. Compose refuses to start when a
 value in `.env` is missing, so a misconfigured host fails at

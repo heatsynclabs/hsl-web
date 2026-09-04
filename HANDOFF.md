@@ -296,6 +296,20 @@ Beyond section 3. None of these is hidden in the code.
   save, which was checked in a browser against a planted 2,005 character value.
   The import preflight reports the rows so nobody meets one by surprise.
 
+- **A deploy can swallow every password reset silently, and the runbook says it
+  cannot.** `make secrets` writes `smtp://mail:1025` into `secrets/smtp_url`,
+  the development mail catcher. The guard in `services/api/src/config.ts` only
+  checks that `SMTP_URL` is defined, and that placeholder is defined, so it
+  passes. The `mail` service in `compose.yaml` carries no profile, so mailpit
+  starts on the public host too and the SMTP connection succeeds. A deploy where
+  somebody ran `make secrets` and did not replace that one file therefore starts
+  cleanly on https, answers every reset request with success, and posts every
+  email into a web inbox nobody reads. The 31 imported members for whom reset is
+  the only way in are locked out with nothing in any log to say so.
+  `docs/operations.md` asserted that the API refuses to start in exactly this
+  case, which it does not; that sentence has been corrected rather than the
+  code. The fix is two small changes: refuse an `smtp://mail:` URL when the
+  origin is https, and put the mail service behind a compose profile.
 - `/space_api.json` has never been proven byte for byte against the live one.
   `README.md` says parity gets proven on a test hostname before the hostname
   moves, and nothing does that yet. The lab website and an ESP8266 status LED
