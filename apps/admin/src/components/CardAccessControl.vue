@@ -9,12 +9,19 @@
     </Note>
 
     <div v-if="!asking" class="access__row">
-      <Button :disabled="saving" @click="asking = true">
+      <Button ref="trigger" :disabled="saving" @click="asking = true">
         {{ cardAccess ? 'Turn card access off' : 'Turn card access on' }}
       </Button>
     </div>
 
-    <div v-else class="access__confirm" role="group" :aria-label="confirmQuestion">
+    <div
+      v-else
+      ref="confirmation"
+      class="access__confirm"
+      role="group"
+      :aria-label="confirmQuestion"
+      tabindex="-1"
+    >
       <p class="access__question">{{ confirmQuestion }}</p>
       <ButtonRow>
         <Button variant="primary" :disabled="saving" @click="confirm">
@@ -31,7 +38,8 @@
 <script setup lang="ts">
 import type { ApiError } from '@hsl/api-client'
 import { Button, ButtonRow, Note } from '@hsl/ui'
-import { computed, ref, watch } from 'vue'
+import type { ComponentPublicInstance } from 'vue'
+import { computed, nextTick, ref, useTemplateRef, watch } from 'vue'
 
 /**
  * The one control on the member screen that opens a building, kept apart from
@@ -48,6 +56,24 @@ const props = defineProps<Props>()
 const emit = defineEmits<{ set: [value: boolean] }>()
 
 const asking = ref(false)
+const trigger = useTemplateRef<ComponentPublicInstance>('trigger')
+const confirmation = useTemplateRef<HTMLElement>('confirmation')
+
+/**
+ * Where the keyboard goes when the question opens and closes.
+ *
+ * Vue swaps the button that was pressed for the question, and a browser drops
+ * focus onto the body when the focused element leaves the document. Without
+ * this the next Tab starts at the top of the page, where the first stop is Sign
+ * out, and a screen reader is told nothing has happened: the group carries the
+ * question as its name, so focusing it is what reads the question aloud.
+ */
+watch(asking, async (open) => {
+  await nextTick()
+
+  if (open) confirmation.value?.focus()
+  else (trigger.value?.$el as HTMLElement | undefined)?.focus()
+})
 
 const confirmQuestion = computed(() =>
   props.cardAccess

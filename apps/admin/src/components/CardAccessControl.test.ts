@@ -2,7 +2,13 @@ import { ApiError } from '@hsl/api-client'
 import { mount, renderToString } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 
-import { attached, click } from '../test-support/interact.ts'
+import {
+  attached,
+  click,
+  focusedText,
+  focusIsInside,
+  pressWithKeyboard,
+} from '../test-support/interact.ts'
 import CardAccessControl from './CardAccessControl.vue'
 
 const base = { memberName: 'Sam Rivera', saving: false, error: null }
@@ -91,6 +97,32 @@ describe('CardAccessControl, clicked', () => {
     await click(wrapper, 'Saving')
 
     expect(wrapper.emitted('set')).toBeUndefined()
+  })
+
+  /**
+   * Card access is a building key and the question is the guard on it, so the
+   * question has to be reachable without a mouse. Vue swaps the pressed button
+   * for the question and the browser drops focus onto the body, which put the
+   * next Tab at the top of the page where the first stop is Sign out.
+   */
+  it('puts the keyboard on the question rather than losing it', async () => {
+    const wrapper = mount(CardAccessControl, { ...attached, props: { ...base, cardAccess: false } })
+
+    await pressWithKeyboard(wrapper, 'Turn card access on')
+
+    expect(focusIsInside(wrapper, '.access__confirm'), `focus was on ${focusedText()}`).toBe(true)
+  })
+
+  it('puts the keyboard back on the control when the question is cancelled', async () => {
+    const wrapper = mount(CardAccessControl, { ...attached, props: { ...base, cardAccess: false } })
+    await pressWithKeyboard(wrapper, 'Turn card access on')
+
+    await pressWithKeyboard(wrapper, 'Cancel')
+    await wrapper.vm.$nextTick()
+
+    expect(document.activeElement?.textContent?.trim(), `focus was on ${focusedText()}`).toBe(
+      'Turn card access on',
+    )
   })
 
   it('drops the stale question when the answer arrives', async () => {

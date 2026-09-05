@@ -89,3 +89,31 @@ export function optionLabels(wrapper: VueWrapper, label: string): string[] {
     .findAll('option')
     .map((option) => option.text())
 }
+
+/**
+ * Presses a button the way a keyboard does: focus it first, then click.
+ *
+ * click() on its own never establishes focus, so a suite using it cannot tell
+ * whether a screen that swaps the pressed button for something else leaves the
+ * keyboard anywhere useful. It does not: the browser drops focus onto the body
+ * when the focused element leaves the document, and the next Tab starts at the
+ * top of the page.
+ */
+export async function pressWithKeyboard(wrapper: VueWrapper, label: string): Promise<void> {
+  const button = named(wrapper, label)
+  ;(button.element as HTMLButtonElement).focus()
+  await button.trigger('click')
+}
+
+/** Whether the keyboard ended up inside the element matching this selector. */
+export function focusIsInside(wrapper: VueWrapper, selector: string): boolean {
+  const region = wrapper.find(selector)
+  return region.exists() && region.element.contains(document.activeElement)
+}
+
+/** What the keyboard is on, for a failure message somebody can read. */
+export function focusedText(): string {
+  const active = document.activeElement
+  if (active === null || active === document.body) return 'the page body, which is nowhere'
+  return `${active.tagName.toLowerCase()} "${(active.textContent ?? '').trim().slice(0, 40)}"`
+}

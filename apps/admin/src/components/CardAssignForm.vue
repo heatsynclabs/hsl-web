@@ -32,12 +32,21 @@
       <Field v-model="label" label="Label, optional" autocomplete="off" />
 
       <ButtonRow>
-        <Button variant="primary" type="submit" :disabled="userId === ''">Review</Button>
+        <Button ref="trigger" variant="primary" type="submit" :disabled="userId === ''">
+          Review
+        </Button>
         <Button @click="emit('cancel')">Cancel</Button>
       </ButtonRow>
     </form>
 
-    <div v-else class="assign__confirm" role="group" :aria-label="question">
+    <div
+      v-else
+      ref="confirmation"
+      class="assign__confirm"
+      role="group"
+      :aria-label="question"
+      tabindex="-1"
+    >
       <p class="assign__question">{{ question }}</p>
       <ButtonRow>
         <Button variant="primary" :disabled="saving" @click="confirm">
@@ -55,7 +64,8 @@
 import type { ApiError } from '@hsl/api-client'
 import type { MemberDirectoryEntry, PostCardRequest } from '@hsl/schema'
 import { Button, ButtonRow, Field, Note } from '@hsl/ui'
-import { computed, ref } from 'vue'
+import type { ComponentPublicInstance } from 'vue'
+import { computed, nextTick, ref, useTemplateRef, watch } from 'vue'
 
 import { matchesQuery } from '../lib/directory.ts'
 import { assignRefusalText } from '../lib/door.ts'
@@ -83,6 +93,21 @@ const search = ref('')
 const userId = ref('')
 const label = ref('')
 const asking = ref(false)
+const trigger = useTemplateRef<ComponentPublicInstance>('trigger')
+const confirmation = useTemplateRef<HTMLElement>('confirmation')
+
+/**
+ * Where the keyboard goes when the question opens and closes. Vue swaps the
+ * form for the question, and a browser drops focus onto the body when the
+ * focused element leaves the document, so without this the next Tab starts at
+ * the top of the page and a screen reader is told nothing has happened.
+ */
+watch(asking, async (open) => {
+  await nextTick()
+
+  if (open) confirmation.value?.focus()
+  else (trigger.value?.$el as HTMLElement | undefined)?.focus()
+})
 
 // The same search the directory runs, over name and email both, so an admin
 // who found somebody on that screen finds them the same way here.

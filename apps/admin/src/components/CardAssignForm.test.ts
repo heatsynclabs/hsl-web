@@ -2,7 +2,15 @@ import { ApiError } from '@hsl/api-client'
 import { mount, renderToString } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 
-import { attached, click, fill, optionLabels } from '../test-support/interact.ts'
+import {
+  attached,
+  click,
+  fill,
+  focusedText,
+  focusIsInside,
+  optionLabels,
+  pressWithKeyboard,
+} from '../test-support/interact.ts'
 import { directoryEntries } from '../test-fixtures.ts'
 import CardAssignForm from './CardAssignForm.vue'
 
@@ -114,6 +122,28 @@ describe('CardAssignForm, filled in', () => {
 
     expect(wrapper.emitted('assign')).toBeUndefined()
     expect(wrapper.text()).toContain('Give card 0004B1C7 to M. Volkov?')
+  })
+
+  it('puts the keyboard on the question rather than losing it', async () => {
+    const wrapper = form()
+
+    await fill(wrapper, 'Member', 'mbr_volkov')
+    await pressWithKeyboard(wrapper, 'Review')
+
+    expect(focusIsInside(wrapper, '.assign__confirm'), `focus was on ${focusedText()}`).toBe(true)
+  })
+
+  it('puts the keyboard back on Review when the question is backed out of', async () => {
+    const wrapper = form()
+    await fill(wrapper, 'Member', 'mbr_volkov')
+    await pressWithKeyboard(wrapper, 'Review')
+
+    await pressWithKeyboard(wrapper, 'Back')
+    await wrapper.vm.$nextTick()
+
+    expect(document.activeElement?.textContent?.trim(), `focus was on ${focusedText()}`).toBe(
+      'Review',
+    )
   })
 
   it('assigns the member who was picked once the question is answered', async () => {

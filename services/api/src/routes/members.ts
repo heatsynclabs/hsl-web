@@ -64,7 +64,12 @@ async function neverUsed(db: Database, memberId: string): Promise<string | null>
   if (member.admin || member.instructor || member.accountant) return 'That member holds a role.'
   if ((member.memberLevel ?? 0) > 0) return 'That member has a dues tier set.'
 
-  const counts = await Promise.all([
+  return (await ownRecord(db, memberId)) ?? (await namedByOthers(db, memberId))
+}
+
+/** The rows that belong to this member. */
+async function ownRecord(db: Database, memberId: string): Promise<string | null> {
+  const found = await Promise.all([
     db.select({ id: cards.id }).from(cards).where(eq(cards.userId, memberId)).limit(1),
     db.select({ id: payments.id }).from(payments).where(eq(payments.userId, memberId)).limit(1),
     db
@@ -77,8 +82,51 @@ async function neverUsed(db: Database, memberId: string): Promise<string | null>
   ])
 
   const names = ['a card', 'a payment', 'a certification', 'a signed release', 'audit history']
-  for (const [index, rows] of counts.entries()) {
-    if (rows.length > 0) return `That member has ${names[index]} on their record.`
+  return firstNamed(found, names, (what) => `That member has ${what} on their record.`)
+}
+
+/**
+ * The rows that name this member without being about them: who ran an
+ * orientation, who granted a certification, who recorded a payment or a signed
+ * release. Each is a foreign key with no delete behaviour, so the database
+ * refuses the removal whatever this route thinks.
+ *
+ * These are not covered by the audit history check above. The import writes all
+ * four from the legacy database and writes no audit rows at all, so an imported
+ * member can be named by one of them and still look untouched.
+ */
+async function namedByOthers(db: Database, memberId: string): Promise<string | null> {
+  const found = await Promise.all([
+    db.select({ id: user.id }).from(user).where(eq(user.orientedById, memberId)).limit(1),
+    db
+      .select({ id: userCertifications.id })
+      .from(userCertifications)
+      .where(eq(userCertifications.grantedById, memberId))
+      .limit(1),
+    db
+      .select({ id: payments.id })
+      .from(payments)
+      .where(eq(payments.recordedById, memberId))
+      .limit(1),
+    db.select({ id: waivers.id }).from(waivers).where(eq(waivers.recordedById, memberId)).limit(1),
+  ])
+
+  const names = [
+    'ran somebody\'s orientation',
+    'granted somebody a certification',
+    'recorded somebody\'s payment',
+    'recorded somebody\'s signed release',
+  ]
+  return firstNamed(found, names, (what) => `That member ${what}.`)
+}
+
+function firstNamed(
+  found: Array<{ id: unknown }[]>,
+  names: string[],
+  say: (what: string) => string,
+): string | null {
+  for (const [index, rows] of found.entries()) {
+    if (rows.length > 0) return say(names[index] ?? 'a record')
   }
 
   return null
@@ -87,9 +135,15 @@ async function neverUsed(db: Database, memberId: string): Promise<string | null>
 /**
  * Removes an account nobody has used, or says why it was kept.
  *
- * The audit row is written before the member row goes and survives it:
- * audit_log.targetId is plain text with no foreign key, exactly so the log can
- * outlive what it describes.
+ * The audit row and the three deletes are one transaction. They used to run one
+ * after another, so a foreign key nothing had checked stopped the last delete
+ * with the credential and the sessions already gone: the member was signed out
+ * everywhere, their password stopped working with nothing to say why, and the
+ * audit log recorded a removal that had not happened. Inside a transaction the
+ * 500 this route answers with is true when it says nothing was changed.
+ *
+ * The audit row itself outlives the member: audit_log.targetId is plain text
+ * with no foreign key, exactly so the log can outlive what it describes.
  */
 async function removeMember(
   deps: AppDeps,
@@ -107,16 +161,18 @@ async function removeMember(
 
   const [member] = await deps.db.select().from(user).where(eq(user.id, memberId)).limit(1)
 
-  await recordAudit(deps.db, {
-    actorId,
-    action: 'member.remove',
-    targetId: memberId,
-    detail: { email: member?.email ?? null },
-  })
+  await deps.db.transaction(async (tx) => {
+    await recordAudit(tx, {
+      actorId,
+      action: 'member.remove',
+      targetId: memberId,
+      detail: { email: member?.email ?? null },
+    })
 
-  await deps.db.delete(account).where(eq(account.userId, memberId))
-  await deps.db.delete(session).where(eq(session.userId, memberId))
-  await deps.db.delete(user).where(eq(user.id, memberId))
+    await tx.delete(account).where(eq(account.userId, memberId))
+    await tx.delete(session).where(eq(session.userId, memberId))
+    await tx.delete(user).where(eq(user.id, memberId))
+  })
 
   return null
 }

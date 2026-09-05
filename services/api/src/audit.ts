@@ -1,6 +1,6 @@
 import { auditLog } from '@hsl/schema'
 
-import type { Database } from './db.ts'
+import type { Database, Transaction } from './db.ts'
 
 /**
  * The one way a row reaches audit_log. Every privileged route calls this
@@ -18,7 +18,10 @@ export interface AuditEntryToRecord {
   detail?: Record<string, unknown>
 }
 
-export async function recordAudit(db: Database, entry: AuditEntryToRecord): Promise<void> {
+export async function recordAudit(
+  db: Database | Transaction,
+  entry: AuditEntryToRecord,
+): Promise<void> {
   await db.insert(auditLog).values({
     actorId: entry.actorId,
     action: entry.action,

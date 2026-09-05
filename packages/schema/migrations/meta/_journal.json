@@ -29,6 +29,13 @@
       "when": 1788334479446,
       "tag": "0003_door_commands",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788560000000,
+      "tag": "0004_append_only_names_its_table",
+      "breakpoints": true
     }
   ]
 }

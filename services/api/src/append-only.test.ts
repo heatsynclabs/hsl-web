@@ -36,15 +36,20 @@ describeDatabase('the append-only tables', () => {
   })
 
   // Drizzle wraps a failed statement in its own Error and keeps the Postgres
-  // error, which carries the trigger's message, as the cause.
-  const refuses = async (statement: string) => {
+  // error, which carries the trigger's message, as the cause. The message has to
+  // name the table it refused: the row trigger is shared between the two tables
+  // and said "audit_log" for both, so a volunteer removing a poisoned door
+  // status was sent to look at the wrong table.
+  const refuses = async (statement: string, table: string) => {
     const thrown = await harness.db
       .execute(sql.raw(statement))
       .then(() => null)
       .catch((error: unknown) => error)
 
     expect(thrown, `${statement} was allowed`).toBeInstanceOf(Error)
-    expect(String((thrown as Error).cause ?? thrown)).toMatch(/append only/)
+    const said = String((thrown as Error).cause ?? thrown)
+    expect(said).toMatch(/append only/)
+    expect(said, `${statement} named the wrong table`).toContain(table)
   }
 
   const rowCounts = async () => ({
@@ -53,24 +58,24 @@ describeDatabase('the append-only tables', () => {
   })
 
   it('refuses to change an audit row', async () => {
-    await refuses(`update audit_log set action = 'tampered'`)
+    await refuses(`update audit_log set action = 'tampered'`, 'audit_log')
     expect(await rowCounts()).toEqual({ audit: 1, door: 1 })
   })
 
   it('refuses to delete an audit row', async () => {
-    await refuses(`delete from audit_log`)
+    await refuses(`delete from audit_log`, 'audit_log')
     expect((await rowCounts()).audit).toBe(1)
   })
 
   it('refuses to truncate the audit log', async () => {
-    await refuses(`truncate audit_log`)
+    await refuses(`truncate audit_log`, 'audit_log')
     expect((await rowCounts()).audit).toBe(1)
   })
 
   it('refuses to change, delete or truncate a door event', async () => {
-    await refuses(`update door_events set kind = 'tampered'`)
-    await refuses(`delete from door_events`)
-    await refuses(`truncate door_events`)
+    await refuses(`update door_events set kind = 'tampered'`, 'door_events')
+    await refuses(`delete from door_events`, 'door_events')
+    await refuses(`truncate door_events`, 'door_events')
     expect((await rowCounts()).door).toBe(1)
   })
 
