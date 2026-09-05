@@ -33,13 +33,19 @@ import type {
 import { ApiError } from './errors.ts'
 
 /**
- * One method per row of the route table in docs/architecture.md. Every method
- * sends the session cookie and parses the answer with the schema the API
- * validated it against, so a route that changes shape fails loudly here instead
- * of putting a half filled member on a screen.
+ * One method per row of the route table in docs/architecture.md, with two
+ * exceptions below. Every method sends the session cookie and parses the answer
+ * with the schema the API validated it against, so a route that changes shape
+ * fails loudly here instead of putting a half filled member on a screen.
  *
  * Sign in, sign out and password reset are not here. Those are the better-auth
  * routes under /api/auth, and better-auth ships its own client for them.
+ *
+ * DELETE /api/members/:id is not here either, and that one is a gap rather than
+ * a choice: the route exists and no screen in any app can reach it. Adding the
+ * method is the small half. The other half is that the route refuses every
+ * account POST /api/signup creates, which is a question about waiver retention
+ * rather than about code. See HANDOFF.md.
  */
 
 export interface ClientOptions {

@@ -102,7 +102,7 @@ Everything the apps need and nothing speculative.
 | POST | `/api/members/:id/certifications` | instructor | grant. Audited |
 | DELETE | `/api/members/:id/certifications/:slug` | instructor | revoke. Audited |
 | POST | `/api/payments` | accountant | record a payment. Audited |
-| DELETE | `/api/members/:id` | admin | remove an account nobody has used. Refused for one with any history. Audited |
+| DELETE | `/api/members/:id` | admin | remove an account nobody has used. Refused for one with any history. Audited. No screen reaches it yet, see HANDOFF |
 | GET | `/api/audit` | admin | who changed what, newest first |
 | GET | `/api/door/unknown-cards` | admin | cards seen at a reader that no card row claims |
 | GET | `/api/door/card-table-view` | admin | what the controller is believed to hold, slot by slot |

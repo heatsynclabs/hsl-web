@@ -109,9 +109,11 @@ The five that were confirmed and left open in the first pass are also fixed:
     the members app did not render, which mattered most to the 31 imported
     members for whom reset is the only way in. The whole loop was then walked end
     to end against the running system.
-11. **A signup could not be undone.** An admin can now remove an account nobody
-    has used, and is refused for one with a card, a payment, a certification, a
-    signed release, an orientation, a role or any audit history.
+11. **A signup could not be undone.** `DELETE /api/members/:id` removes an
+    account nobody has used, and is refused for one with a card, a payment, a
+    certification, a signed release, an orientation, a role or any audit
+    history. Findings 45 and 53 undo most of this claim: no screen reaches the
+    route, and it refuses every account signup creates.
 12. **Rate limiting was better-auth's default**: off outside production, 100
     requests per ten seconds when on. It is thirty sign-in requests a minute now,
     and a correct password is refused while limited so a guesser learns nothing
@@ -634,6 +636,63 @@ and cookies attacked rather than read. Four findings, three of them fixed in
     rows are carried: section 13 forbids a constraint that rejects existing data,
     and the member sees the tool listed twice until somebody revokes it.
 
+52. **`POST /api/signup` is unauthenticated and nothing limits it.**
+    better-auth's rate limiter runs inside its own router, in the `onRequest`
+    hook of `createRouter`, and `POST /api/signup` calls `auth.api.signUpEmail`
+    directly so that joining survives the allow list from finding 21. That is
+    the right call and it has this cost: signup is outside the limiter. Caddy
+    limits the body size and nothing else, the `caddy:2-alpine` image carries no
+    rate limit module, and there is no limiter anywhere in this repository
+    outside `RATE_LIMIT` in `auth.ts`.
+
+    Measured on current source, both from the same process and against the
+    running stack. The 31st sign-in from one address is refused with 429; the
+    35th signup from the same address is accepted with 201, and so is the next.
+    Thirty-five member rows were created by a caller with no session. One signup
+    over HTTP takes 173 ms and twenty at once take 2.60 s, so the ceiling is
+    about eight a second: the cost is a bcrypt hash at cost 10 in pure
+    JavaScript per ADR 0013, on the API's one thread.
+
+    Two harms, and they are not the same size. The smaller is availability:
+    other requests degraded from 1.5 ms to between 2 and 25 ms under a burst of
+    twenty, because bcryptjs 3.0.2 yields every 100 ms rather than blocking, so
+    this is a CPU faucet an attacker can open rather than a freeze. Sustained,
+    it is the door service's poll and the status post that suffer, and two
+    missed posts is the 120 seconds after which remote control answers 503 and
+    the public page reads closed. Physical cards are untouched throughout, so
+    gate 2 of section 13 holds.
+
+    The larger harm is the rows. Every accepted signup writes a member, an
+    account and a waiver. `hidden` defaults false, so each one is a row in
+    `GET /api/members` for every oriented member who opens the directory, and
+    finding 45 means an admin cannot remove any of them: the waiver refuses it,
+    the dues tier refuses it, and finding 53 says no screen reaches the route in
+    the first place. The only way to clear them is SQL against the production
+    database.
+
+    Not fixed. The shape of the fix is clear, a per address fixed window on
+    `/api/signup` beside `SIGN_IN_ATTEMPTS_PER_MINUTE`, but the number is a lab
+    judgement with a real cost on the wrong side: too tight and somebody who
+    came to the lab on orientation night cannot join. Production averages about
+    six signups a month across 1,061 members in fifteen years, so twenty an hour
+    per address would never touch an honest use and would cut an attacker from
+    one address by more than a thousandfold. Three other decisions come with it:
+    which header the address is read from, what happens in development where
+    there is no proxy and so no address, and what the suites do. That is four
+    judgement calls, which is more than an audit pass should make on the lab's
+    behalf.
+53. **No screen can reach `DELETE /api/members/:id`.** `@hsl/api-client` says it
+    has one method per row of the route table in `docs/architecture.md`. It has
+    twenty methods and the route table has twenty-one rows the apps use. The
+    missing one is the delete, and the only `fetch` any app makes outside the
+    client is the admin sign out. So the route from finding 11 has never been
+    reachable by an admin, only by the suite, which is why nobody had met
+    finding 45.
+
+    The client comment says so now. Building the screen is the wrong next step
+    while the route refuses every account signup creates: that order would ship
+    a button that always answers 409.
+
 Checked and clean this pass, with what was checked:
 
 - **The schema at real volume.** 1,061 members, 8,291 payments, 415 grants, 64
@@ -662,6 +721,25 @@ Checked and clean this pass, with what was checked:
 - **Whether the import's dry run leaves anything behind.** It does not.
   `ALTER TABLE certifications ALTER COLUMN id RESTART WITH` is rolled back on
   Postgres 18, which was tested rather than remembered.
+- **`tools/backup.sh` and `tools/restore.sh`, run for the first time.**
+  `docs/operations.md` says the restore drill does not exercise either of them
+  and that running them once on the host is worth doing before relying on the
+  cron line. Done, against the running stack: the backup wrote a 48 kB custom
+  format dump and a roles file, both 0600 in a 0700 directory, and the restore
+  brought every table back into a throwaway copy and printed the counts. The
+  "The restore succeeded" line is honest, which was checked rather than assumed:
+  `pg_restore` exits 1 when it ignores errors, measured at 82 ignored errors on
+  a deliberate second restore over a populated database, and `set -e` stops the
+  script before that line.
+- **Whether a client can spoof the address the rate limiter keys on.** It
+  cannot, and the guard is Caddy's rather than this repository's. Caddy replaces
+  `X-Forwarded-For` with the peer address rather than appending to it, measured
+  by signing in with one spoofed entry and then two and reading
+  `session.ip_address` both times: the real address either way. better-auth's
+  `getIPFromHeader` returns null for a header with more than one entry when no
+  `trustedProxies` is configured, so an appending proxy would have dropped every
+  request into one shared bucket. Worth knowing before anything else is put in
+  front of Caddy.
 - **The import run twice, and after a failure.** The second run is refused by
   name: "The target database already holds 5 rows in user." A run that fails
   part way rolls the whole transaction back and leaves the target empty and
@@ -777,9 +855,11 @@ Beyond section 3. None of these is hidden in the code.
   sends only what changed, and a member over the limit can delete characters and
   save, which was checked in a browser against a planted 2,005 character value.
   The import preflight reports the rows so nobody meets one by surprise.
-- **An admin cannot undo a signup.** Finding 45. The route is there, the
-  refusal is deliberate, and the two do not meet. Whether a release signed at
-  signup is a record the lab keeps is a board question, not a code one.
+- **An admin cannot undo a signup, and no screen offers to.** Findings 45, 52
+  and 53 are one knot. The route is there, no app reaches it, it refuses every
+  account signup creates, and signup itself is unauthenticated and unlimited.
+  Untying it starts with the board question about waiver retention, because
+  everything else follows from the answer.
 - **The keyboard and screen reader path through all three apps.** Finding 48 is
   the map: five sites, one job, and only the two confirmations are fixed.
   Nothing in the front end announces a success to a screen reader.
