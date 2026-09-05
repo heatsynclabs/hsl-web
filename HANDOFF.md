@@ -3,7 +3,7 @@
 Where this stands, what is proven, and what the next person has to decide. One
 page, kept current. If it disagrees with anything else, fix one of them.
 
-Last updated 2026-09-04.
+Last updated 2026-09-05.
 
 ## 1. State
 
@@ -22,7 +22,7 @@ runs on a laptop under Docker Compose, and `README.md` is the instructions.
 | `apps/admin` | built | 185 tests, walked through and keyboard driven in a browser |
 | `tools/import` | built, run against the real dump | 40 tests, 12 needing `LEGACY_DATABASE_URL`, plus the run in section 2 |
 | Compose stack | runs | brought up from nothing, every URL answers |
-| Backup and restore | works | `tools/restore-drill.sh` passes, in CI |
+| Backup and restore | works | `tools/restore-drill.sh` in CI, and `backup.sh` and `restore.sh` run by hand once against the stack |
 | Deployment | not started | no host exists yet, see section 5 |
 
 736 tests, which is what `pnpm check` runs. `tools/import` is not a workspace
@@ -30,10 +30,11 @@ package and has its own 40 and its own CI job. Lint, typecheck and the voice
 check are clean.
 
 14,939 lines of TypeScript, Vue and build scripts, and 9,965 lines of tests,
-fixtures and harnesses, counted across `apps`, `packages`, `services` and
-`tools` with build output excluded. 14 ADRs. The previous attempt was
-50,941 lines and deployed nothing; the difference is almost entirely enforcement
-machinery that is not here on purpose.
+fixtures and harnesses, counted at `5fd0dcb` across `apps`, `packages`,
+`services` and `tools` with build output excluded. The pass in section 3 added
+about four hundred lines, more than half of them tests. 14 ADRs. The previous
+attempt was 50,941 lines and deployed nothing; the difference is almost entirely
+enforcement machinery that is not here on purpose.
 
 25 routes, plus the better-auth handler, which serves five paths and answers 404
 for everything else it mounts.
@@ -496,11 +497,19 @@ is how the first Node 24 run and one local run were made to fail.
 
 ### Surfaces nobody had been over
 
-Four areas that no previous pass had touched, on 2026-09-04: the keyboard and
-screen reader path through the admin app, delete behaviour and the append-only
-guarantee at the database, the schema under a year of real volume, and sessions
-and cookies attacked rather than read. Four findings, three of them fixed in
-`4899d3a`.
+Nine areas no previous pass had touched, on 2026-09-04 and 2026-09-05: the
+keyboard and screen reader path through all three apps, delete behaviour and the
+append-only guarantee at the database, the schema under a year of real volume,
+sessions and cookies attacked rather than read, `tools/import` attacked as code
+rather than followed as a runbook, the open routes attacked rather than
+confirmed, `packages/api-client` read against the route table it says it
+mirrors, the backup and restore scripts run for the first time, and the three
+apps driven in a browser.
+
+Eleven findings. Seven are fixed outright, across `4899d3a`, `6740d57`,
+`8475a2c` and `9bd2565`, and 53 has had its documentation corrected without its
+substance being built. What is left open is 45, 48, 52 and the substance of 53,
+and each is left for a reason written beside it rather than for want of time.
 
 44. **The two-step confirmations lost the keyboard.** Vue swaps the pressed
     button for the question, and a browser drops focus onto the page body when
@@ -910,8 +919,10 @@ Beyond section 3. None of these is hidden in the code.
   a new certificate, which is an inconvenience rather than data loss.
 - `tools/restore-drill.sh` proves `pg_dump` and `pg_restore` round trip on the
   image this stack runs. It does not call `tools/backup.sh` or
-  `tools/restore.sh`, so those two have never run in CI, and `docs/operations.md`
-  now says so rather than implying otherwise.
+  `tools/restore.sh`, so neither of those runs in CI, and `docs/operations.md`
+  says so rather than implying otherwise. Both have been run by hand once
+  against the stack, in section 3, so they work; nothing runs them again on a
+  change.
 - **The status LED may not survive the move to https.** The SpaceAPI template is
   http throughout, including its own `url`, `logo`, `cam` and `feeds`, because it
   is copied from production unchanged. An ESP8266 reading
