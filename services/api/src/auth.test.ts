@@ -111,6 +111,9 @@ function devisePasswordHash(password: string): string {
  * per 10 seconds, which is enough to walk a password list against a known
  * member address. The limits here are chosen, so they are worth a test.
  */
+/** Thirty bcrypt verifications at cost 10, with room for a slow CI runner. */
+const SLOW_BCRYPT_MS = 60_000
+
 describeDatabase('guessing a password', () => {
   const harness: Harness = createHarness()
   let member: SignedInMember
@@ -133,7 +136,15 @@ describeDatabase('guessing a password', () => {
       body: JSON.stringify({ email: member.member.email, password }),
     })
 
-  it('stops after the configured number of tries in a minute', async () => {
+  /**
+   * These two spend the whole budget on purpose, so each runs about thirty
+   * bcrypt verifications at cost 10. bcryptjs is pure JavaScript, per
+   * decisions/0013, and one verify measured 441 ms on a loaded laptop, so this
+   * is inherently several seconds of work and vitest's five second default is
+   * not enough. The timeout is generous rather than tuned: a gate that fails on
+   * a slow machine is a gate people learn to re-run.
+   */
+  it('stops after the configured number of tries in a minute', { timeout: SLOW_BCRYPT_MS }, async () => {
     const codes: number[] = []
     for (let attempt = 0; attempt < SIGN_IN_ATTEMPTS_PER_MINUTE + 4; attempt += 1) {
       codes.push((await guess('not the password')).status)
@@ -143,7 +154,7 @@ describeDatabase('guessing a password', () => {
     expect(codes.filter((code) => code === 429).length).toBeGreaterThan(0)
   })
 
-  it('stops the right password too, so a guesser learns nothing from the difference', async () => {
+  it('stops the right password too, so a guesser learns nothing from the difference', { timeout: SLOW_BCRYPT_MS }, async () => {
     for (let attempt = 0; attempt < SIGN_IN_ATTEMPTS_PER_MINUTE + 2; attempt += 1) {
       await guess('not the password')
     }

@@ -105,12 +105,7 @@ export function createHttpTransport(
     const response = await fetch(`${baseUrl}${query}`, {
       signal: AbortSignal.timeout(timeoutMs),
     }).catch((cause: unknown) => {
-      throw new Error(
-        `The controller did not answer ${redactPassword(query)} within ${timeoutMs / 1000} ` +
-          'seconds. Nothing was changed and cards already on the controller still open the ' +
-          'door. Check that it is powered and on the LAN, and power cycle it if it is wedged.',
-        { cause },
-      )
+      throw new Error(unreachable(query, timeoutMs, cause), { cause })
     })
     if (!response.ok) {
       throw new Error(
@@ -121,6 +116,35 @@ export function createHttpTransport(
     }
     return response.text()
   }
+}
+
+/** AbortSignal.timeout rejects with a DOMException named TimeoutError, checked. */
+function isTimeout(cause: unknown): boolean {
+  return typeof cause === 'object' && cause !== null && 'name' in cause && cause.name === 'TimeoutError'
+}
+
+/**
+ * Two different failures with two different answers. A timeout means the board
+ * took the connection and stopped talking, which is what a wedged Arduino looks
+ * like and what a power cycle fixes. Anything else means nothing was listening,
+ * which is a wrong address or a board that is off.
+ */
+function unreachable(query: string, timeoutMs: number, cause: unknown): string {
+  const where = redactPassword(query)
+  const kept =
+    'Nothing was changed and cards already on the controller still open the door.'
+
+  if (isTimeout(cause)) {
+    return (
+      `The controller accepted the connection and then did not answer ${where} within ` +
+      `${timeoutMs / 1000} seconds. ${kept} It is wedged rather than absent, so power cycle it.`
+    )
+  }
+
+  return (
+    `The controller could not be reached for ${where}. ${kept} Check that it is powered and on ` +
+    'the LAN, and that CONTROLLER_URL names it.'
+  )
 }
 
 function refusedWrite(parameter: string, body: string): Error {

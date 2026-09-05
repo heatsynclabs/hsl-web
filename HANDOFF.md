@@ -15,8 +15,8 @@ runs on a laptop under Docker Compose, and `README.md` is the instructions.
 | `packages/schema` | built | 26 tests, 4 migrations applied to a real Postgres |
 | `packages/ui` | built | 28 tests, rendered in a browser in both themes |
 | `packages/api-client` | built | 15 tests |
-| `services/api` | built | 223 tests against a real Postgres |
-| `services/door` | built, never spoken to hardware | 149 tests, 12 of them over a socket against a simulated board |
+| `services/api` | built | 228 tests against a real Postgres |
+| `services/door` | built, never spoken to hardware | 150 tests, 12 of them over a socket against a simulated board |
 | `apps/members` | built | 66 tests, walked through in a browser |
 | `apps/signup` | built | 33 tests, walked through in a browser |
 | `apps/admin` | built | 181 tests, walked through in a browser |
@@ -25,7 +25,7 @@ runs on a laptop under Docker Compose, and `README.md` is the instructions.
 | Backup and restore | works | `tools/restore-drill.sh` passes, in CI |
 | Deployment | not started | no host exists yet, see section 5 |
 
-721 tests, which is what `pnpm check` runs. `tools/import` is not a workspace
+727 tests, which is what `pnpm check` runs. `tools/import` is not a workspace
 package and has its own 37 and its own CI job. Lint, typecheck and the voice
 check are clean.
 
@@ -425,6 +425,73 @@ which was suspected and disproved; the reset link's `redirectTo` is validated
 against the trusted origin list, so an attacker cannot point it at their own
 domain; `/api/auth/change-email` and `/api/auth/delete-user` are disabled.
 
+### Auditing the audit
+
+The deployment audit's two completeness critics never ran: both died on a spend
+limit, so nobody had asked what the ten dimensions missed, and nobody had looked
+at the changes the audit itself produced. That pass ran on 2026-09-04 and found
+five more, three of them in work from the day before.
+
+38. **`make seed` on a fresh production host hands out a building key.** The only
+    guard was that the database already held members, and a production database
+    is empty from `make up` until the import runs. `README.md` ends its install
+    block with `make seed`, so a volunteer following the front page rather than
+    `docs/operations.md` does exactly this on the real host. It writes nine
+    invented members, one of them an admin, all sharing the password `heatsync`,
+    which the README prints two lines later. An admin can grant themselves card
+    access and drive the doors.
+
+    This is the same shape as `make reset` before finding 24: a comment saying
+    "only ever run against a local database" and nothing enforcing it. There is
+    a `seedRefusal` now, reading the same https signal as the SMTP guard, with
+    four tests, and it was watched refusing through the built image and the real
+    `make seed` path rather than only in the suite.
+39. **The controller timeout message added yesterday lied.** A board that is off
+    refuses the connection in about ten milliseconds, and the message said it
+    "did not answer within 15 seconds" and told the volunteer to power cycle it.
+    Section 7 of `CONTRIBUTING.md` asks an error to say what happened. It now
+    separates the two: a `TimeoutError` means the board took the connection and
+    stopped talking, which a power cycle fixes, and anything else means nothing
+    was listening, which is a wrong `CONTROLLER_URL` or an unpowered board. The
+    shape was read off a real rejection rather than guessed: `AbortSignal.timeout`
+    rejects with a `DOMException` named `TimeoutError` and no cause, and the
+    first attempt at this check looked one level too deep and classified every
+    timeout as unreachable.
+40. **The log redaction added yesterday threw away the stack.** Stripping the
+    bind parameters also removed every frame, so an unhandled error said what
+    failed and not where. The frames are file names and carry no values, so six
+    of them are kept and the message they hang off is still redacted.
+41. **Two rate limit tests were bcrypt bound and over the default timeout.** They
+    spend the whole sign-in budget on purpose, so each runs about thirty bcrypt
+    verifications at cost 10, and bcryptjs is pure JavaScript per ADR 0013. One
+    verify measured 441 ms on a loaded laptop, which is fifteen seconds of work
+    against vitest's five second default. They passed on a fast idle machine and
+    failed consistently once the machine was busy. They carry an explicit
+    60 second timeout now, with the measurement written beside it.
+42. **`tools/voice-check.mjs` crashed with a raw Node stack** when run outside a
+    git checkout, because `git ls-files` is how it finds its files. It says what
+    is wrong and what to pass instead.
+43. **`pnpm check` itself failed two full runs in three.** `apps/members`'s
+    `lib/auth.test.ts` imports the better-auth client inside each test, because
+    the client captures `globalThis.fetch` when it is built and the suite has to
+    stand up its fetch first, per ADR 0012. That import is charged to the test's
+    own timeout, and the three app suites start jsdom at once: one run spent 129
+    seconds in environment setup. The file passes in three seconds on its own.
+    That suite has a 30 second `testTimeout` now, with the reason beside it. It
+    was nearly written off as a busy machine, which would have left the gate
+    failing at random on a CI runner.
+
+Checked and clean this pass: Node 24.20, which `.nvmrc` now names so CI tests
+what the images run, passes lint and typecheck and 226 of the 228 API tests in
+that image, the two failures being the container not reaching the test database
+rather than anything about the runtime. `make up`'s new ordering was confirmed
+with `--dry-run` to touch only `db`, never `api` or `web`, so a failed migration
+still leaves the site serving.
+
+One measurement worth keeping: running two test suites against one throwaway
+Postgres corrupts both, because the Vitest global setup drops the schema. That
+is how the first Node 24 run and one local run were made to fail.
+
 ## 4. Facts that overrule the older documents
 
 `docs/legacy-system.md` has the full list with sources. The ones that changed
@@ -543,6 +610,28 @@ Beyond section 3. None of these is hidden in the code.
   image this stack runs. It does not call `tools/backup.sh` or
   `tools/restore.sh`, so those two have never run in CI, and `docs/operations.md`
   now says so rather than implying otherwise.
+- **The status LED may not survive the move to https.** The SpaceAPI template is
+  http throughout, including its own `url`, `logo`, `cam` and `feeds`, because it
+  is copied from production unchanged. An ESP8266 reading
+  `http://<host>/space_api.json` meets Caddy's redirect to https and then needs
+  TLS with a CA bundle, which is not a given on that part. Nobody has looked at
+  the LED's firmware. This is a cutover risk with a silent failure: the sign goes
+  dark and nothing logs anything.
+- The guard from finding 24 covers a card table that is empty, not one that is
+  partially there. A members database answering with one card row out of
+  sixty-four would still clear the other sixty-three. `pg_restore` is
+  transactional per table so a half filled `cards` table is unlikely, which is
+  why the guard is written on "no rows at all" rather than on a fraction, but
+  the limit is real and is worth widening if a partial state ever turns up.
+- `AbortSignal.timeout` is Safari 16 and Chrome 103. An older browser throws
+  inside the client's try block, so a member on such a device is told the API
+  could not be reached when the problem is their browser. The fallback is an
+  `AbortController` and a `setTimeout`, about eight lines. It was left alone
+  because the failure is a wrong message rather than a broken screen and nobody
+  has established that a member uses such a device.
+- A `.env` written before 2026-09-04 has no `COMPOSE_PROFILES=dev`, so `make up`
+  on an existing development machine stops the mail catcher. Adding that line
+  brings it back.
 - `/space_api.json` has never been proven byte for byte against the live one.
   `README.md` says parity gets proven on a test hostname before the hostname
   moves, and nothing does that yet. The lab website and an ESP8266 status LED

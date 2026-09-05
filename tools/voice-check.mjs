@@ -37,8 +37,19 @@ const EXTENSIONS = /\.(md|vue|ts|tsx|js|mjs|css|html|sql|yaml|yml)$/
 
 function targets(args) {
   if (args.length > 0) return args
-  const tracked = execSync('git ls-files', { encoding: 'utf8' }).split('\n')
-  return tracked.filter((f) => f && EXTENSIONS.test(f))
+
+  let tracked
+  try {
+    tracked = execSync('git ls-files', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+  } catch {
+    // Outside a checkout there is no file list, and the raw child_process error
+    // says nothing a person can act on.
+    console.error('voice-check: this is not a git checkout, so there is no list of files to read.')
+    console.error('Pass the paths to check instead: node tools/voice-check.mjs <paths...>')
+    process.exit(1)
+  }
+
+  return tracked.split('\n').filter((f) => f && EXTENSIONS.test(f))
 }
 
 function findings(file) {

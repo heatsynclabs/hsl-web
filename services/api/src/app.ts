@@ -82,9 +82,25 @@ export function logSafeError(error: unknown): string {
 
   const statement = error.message.split('\nparams:')[0] ?? ''
   const cause = postgresCause(error.cause)
+  const described = cause === null ? statement : `${statement} (${cause})`
 
-  return cause === null ? `${error.name}: ${statement}` : `${error.name}: ${statement} (${cause})`
+  return [`${error.name}: ${described}`, ...frames(error)].join('\n')
 }
+
+/**
+ * The stack without its first line. That line is the message, which carries the
+ * bind parameters; the frames below it are file names and are what says where
+ * the failure was.
+ */
+function frames(error: Error): string[] {
+  return (error.stack ?? '')
+    .split('\n')
+    .filter((line) => line.trimStart().startsWith('at '))
+    .slice(0, STACK_FRAMES)
+}
+
+/** Enough to find the route and the call, without filling the log with runtime internals. */
+const STACK_FRAMES = 6
 
 /** The parts of a Postgres error that describe the failure rather than the row. */
 function postgresCause(cause: unknown): string | null {

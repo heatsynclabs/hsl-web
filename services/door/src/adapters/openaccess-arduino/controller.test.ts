@@ -35,6 +35,20 @@ describe('a controller that accepts the connection and never answers', () => {
     await expect(transport('?9')).rejects.toThrow(/did not answer/)
   })
 
+  /**
+   * A board that is off answers instantly, and saying it timed out sends the
+   * volunteer to power cycle something that is already unpowered.
+   */
+  it('says the board could not be reached when nothing is listening at all', async () => {
+    const nothing = createHttpTransport('http://127.0.0.1:9', 250)
+
+    const message = await nothing('?9').catch((error: Error) => error.message)
+
+    expect(message).toContain('could not be reached')
+    expect(message).toContain('CONTROLLER_URL')
+    expect(message).not.toContain('did not answer')
+  })
+
   it('says what to do next, and never prints the password', async () => {
     const transport = createHttpTransport(`http://127.0.0.1:${port}`, 250)
 

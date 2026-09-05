@@ -51,6 +51,13 @@ describe('what a failed request writes to the log', () => {
     expect(logSafeError(drizzleError())).not.toContain('probe@example.test')
   })
 
+  it('keeps the stack frames, which are file names and say where it happened', () => {
+    const logged = logSafeError(drizzleError())
+
+    expect(logged).toMatch(/\n\s+at /)
+    expect(logged).not.toContain('Probe Person')
+  })
+
   it('says something useful about a value that was not an Error at all', () => {
     expect(logSafeError('a bare string')).toContain('not an Error')
   })

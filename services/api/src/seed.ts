@@ -8,6 +8,8 @@ import {
   user,
   userCertifications,
 } from '@hsl/schema'
+import { pathToFileURL } from 'node:url'
+
 import bcrypt from 'bcryptjs'
 
 import { loadConfig } from './config.ts'
@@ -224,17 +226,46 @@ function announce(origin: string): void {
   }
 }
 
+/**
+ * Why this database must not be seeded, or null when it may be.
+ *
+ * The members here are invented, but one of them is an admin and they all share
+ * a password printed in `README.md`. An admin can grant themselves card access
+ * and drive the doors, so a seeded public host hands out a building key.
+ *
+ * Being empty is not enough on its own: a production host has an empty database
+ * from `make up` until the import runs, and `README.md` ends its install block
+ * with `make seed`. https is the same signal the SMTP guard in config.ts reads.
+ */
+export function seedRefusal(publicOrigin: string, existingMembers: number): string | null {
+  if (publicOrigin.startsWith('https://')) {
+    return (
+      `${publicOrigin} is an https origin, so this is a deployment rather than a laptop and ` +
+      'nothing was written. The seed writes invented members, one of them an admin, all ' +
+      `sharing the password ${PASSWORD}, which is printed in README.md. On a real host that is ` +
+      'a building key. Import the members database instead, or sign up and run `make admin`.'
+    )
+  }
+
+  if (existingMembers > 0) {
+    return (
+      'The database already holds members, so nothing was written. Seed data is for an empty ' +
+      'local database. Run `make reset` to start over.'
+    )
+  }
+
+  return null
+}
+
 async function main(): Promise<void> {
   const config = loadConfig(process.env)
   const { db, pool } = createDatabase(config)
 
   try {
     const existing = await db.select({ id: user.id }).from(user).limit(1)
-    if (existing.length > 0) {
-      console.error(
-        'The database already holds members, so nothing was written. Seed data is for an empty ' +
-          'local database. Run `make reset` to start over.',
-      )
+    const refusal = seedRefusal(config.publicOrigin, existing.length)
+    if (refusal !== null) {
+      console.error(refusal)
       process.exitCode = 1
       return
     }
@@ -249,4 +280,7 @@ async function main(): Promise<void> {
   }
 }
 
-await main()
+// Only when run directly, so the suite can import the rule without seeding.
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main()
+}
