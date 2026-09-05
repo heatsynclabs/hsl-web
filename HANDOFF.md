@@ -693,6 +693,22 @@ and cookies attacked rather than read. Four findings, three of them fixed in
     while the route refuses every account signup creates: that order would ship
     a button that always answers 409.
 
+54. **The lab host's own README gives the secret mode that stops the door
+    service starting.** Finding 32 established that compose bind mounts a file
+    secret and ignores `uid`, `gid` and `mode`, so a 0600 file owned by a
+    deployer who is not uid 1000 cannot be read by a container running as `node`.
+    `docs/operations.md` carries the fix for both hosts, 0644 in a 0700
+    directory, with the reason beside it. `services/door/README.md` still said
+    `chmod 600 secrets/*` in the copy-pasteable block under "Running it", which
+    is the first thing anybody setting up the lab host reads.
+
+    Shown rather than argued, because Docker Desktop's file sharing hides it on
+    this machine: inside `node:24.20-alpine`, a file owned by uid 1001 at mode
+    0600 is refused to uid 1000 and readable at 0644. The service says which
+    file it could not read, so the failure is at least diagnosable, but it is on
+    the day the lab is trying to bring the door online. The README matches
+    `operations.md` now, reason included.
+
 Checked and clean this pass, with what was checked:
 
 - **The schema at real volume.** 1,061 members, 8,291 payments, 415 grants, 64
@@ -721,6 +737,12 @@ Checked and clean this pass, with what was checked:
 - **Whether the import's dry run leaves anything behind.** It does not.
   `ALTER TABLE certifications ALTER COLUMN id RESTART WITH` is rolled back on
   Postgres 18, which was tested rather than remembered.
+- **Whether anything documented opens a door without recording it.** Nothing
+  does. `services/door` answers `/status` and `/control` on the lab host's
+  loopback, and a command run through `/control` writes no audit row and no door
+  event, which the queued path does. `docs/operations.md` sends a volunteer to
+  `/healthz` and never to either of the other two, so there is no documented way
+  to open the building off the record.
 - **`tools/backup.sh` and `tools/restore.sh`, run for the first time.**
   `docs/operations.md` says the restore drill does not exercise either of them
   and that running them once on the host is worth doing before relying on the

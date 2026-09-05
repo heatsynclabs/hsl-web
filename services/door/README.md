@@ -53,12 +53,18 @@ On the lab host, through compose, which is the only way it runs in production:
 ```
 cd infra/door
 cp .env.example .env        # CONTROLLER_URL and API_URL
-mkdir -p secrets
+mkdir -p secrets && chmod 700 secrets
 printf '%s' '<the controller password>' > secrets/controller_password
 printf '%s' '<the door token from the public host>' > secrets/door_token
-chmod 600 secrets/*
+chmod 644 secrets/*
 docker compose up -d --build
 ```
+
+The modes match the public host and for the same reason: compose bind mounts a
+file secret and ignores `uid`, `gid` and `mode`, and this container reads it as
+uid 1000. A 0600 file owned by a deployer who is not uid 1000 is unreadable
+inside it, and the service stops at boot saying the file could not be read. The
+0700 directory is what keeps other host users out.
 
 On a laptop, against nothing:
 
