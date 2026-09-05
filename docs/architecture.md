@@ -5,7 +5,7 @@ One pnpm workspace. Two services, three packages, three apps, one database.
 ```
 apps/members     profile, cards, certifications, dues, door controls, sign in
 apps/signup      join: account, waiver, tier, what happens next
-apps/admin       directory, member detail, access, audit
+apps/admin       directory, member detail, door, audit, payments
       |
       | imports types and components only
       v
@@ -15,7 +15,7 @@ packages/api-client  a typed fetch client over the schemas
       ^
       | imports
       |
-services/api     Hono, better-auth, about fifteen routes, the only thing that
+services/api     Hono, better-auth, twenty-five routes, the only thing that
                  writes to Postgres
 services/door    Hono, the DoorController adapters, the reconcile loop.
                  Runs on the lab LAN. The only holder of the controller password.
@@ -58,7 +58,7 @@ built.
 
 ## The data
 
-Ten tables. The member is the user row, so there is no profile table to keep in
+Twelve tables. The member is the user row, so there is no profile table to keep in
 sync.
 
 | Table | Holds |
@@ -71,6 +71,7 @@ sync.
 | `payments` | recorded dues |
 | `waivers` | signed liability releases |
 | `audit_log` | append-only record of every privileged change |
+| `door_commands` | what a member asked the door to do, waiting for the door service to collect it. The drain refuses anything that waited more than two minutes and records that it never ran |
 | `door_events` | what the door did, and the last status the controller reported |
 
 `user_certifications` is a join table rather than an array column because the
@@ -83,7 +84,12 @@ Everything the apps need and nothing speculative.
 
 | Method | Path | Who | Does |
 |---|---|---|---|
-| any | `/api/auth/*` | everyone | better-auth: sign in, sign out, reset |
+| GET | `/healthz` | everyone | liveness. Deliberately does not check Postgres |
+| POST | `/api/auth/sign-in/email` | everyone | better-auth |
+| POST | `/api/auth/sign-out` | everyone | better-auth |
+| POST | `/api/auth/request-password-reset` | everyone | better-auth |
+| POST | `/api/auth/reset-password` | everyone | better-auth |
+| GET | `/api/auth/reset-password/:token` | everyone | better-auth, where the emailed link lands |
 | GET | `/api/me` | member | own row, cards, certifications, payments |
 | PATCH | `/api/me` | member | own contact fields and per-field visibility |
 | POST | `/api/signup` | anyone | create an account, record the waiver and chosen tier |
@@ -96,16 +102,27 @@ Everything the apps need and nothing speculative.
 | POST | `/api/members/:id/certifications` | instructor | grant. Audited |
 | DELETE | `/api/members/:id/certifications/:slug` | instructor | revoke. Audited |
 | POST | `/api/payments` | accountant | record a payment. Audited |
+| DELETE | `/api/members/:id` | admin | remove an account nobody has used. Refused for one with any history. Audited |
 | GET | `/api/audit` | admin | who changed what, newest first |
+| GET | `/api/door/unknown-cards` | admin | cards seen at a reader that no card row claims |
+| GET | `/api/door/card-table-view` | admin | what the controller is believed to hold, slot by slot |
+| GET | `/api/door/events` | admin | the door's own history |
+| POST | `/api/door/sync` | admin | push the card table now rather than on the next pass. Audited |
 | POST | `/api/door/control` | member with card access | open, lock, unlock, arm, disarm |
 | GET | `/api/door/status` | member | the last status the door service posted |
 | GET | `/space_api.json` | public | the payload the lab website and the status LED read |
 
-Three routes exist only for the door service and authenticate with a shared
-credential rather than a session: one to fetch the card table it should
-reconcile to, one to post status and events back, and one to hand it the
-commands a member asked for while it was between passes. The door service names
-them in `services/door/src/link.ts`, since it is written first.
+Three more exist only for the door service and authenticate with a shared
+credential rather than a session: `GET /api/door/card-table` for the table it
+should reconcile to, `POST /api/door/report` for status and events, and
+`GET /api/door/commands` for the commands a member asked for while it was
+between passes. The door service names them in `services/door/src/link.ts`.
+
+better-auth mounts about thirty endpoints under `/api/auth`. `app.ts` serves
+the five above and answers 404 for the rest, because two of the others write to
+the member row past the contracts in `@hsl/schema`. The list is
+`SERVED_AUTH_PATHS` in `services/api/src/auth.ts`, and that is the one place to
+edit when an app needs another one.
 
 ## The door adapter
 
@@ -120,8 +137,12 @@ export interface DoorController {
   writeCard(slot: number, permissions: number, tag: string): Promise<void>
   clearCard(slot: number): Promise<void>
   readLog(): Promise<DoorLogEntry[]>
+  clearLog(): Promise<void>
 }
 ```
+
+`services/door` implements this as `DoorAdapter`, which adds the two reads the
+admin card table screen needs, `readCardTable` and `readCard`.
 
 The HTTP API above the interface is permanent. The adapter below it is whatever
 the lab owns this year. Today that is `openaccess-arduino`, which speaks the
@@ -134,8 +155,8 @@ hardware is underneath.
 
 ## What is deliberately not here
 
-No identity product to operate. No PostgREST or policy layer, because fifteen
-explicit routes are easier to read than a policy engine. No approval queue, per
+No identity product to operate. No PostgREST or policy layer, because a table of
+explicit routes is easier to read than a policy engine. No approval queue, per
 `decisions/0008-single-admin-plus-audit-log.md`. No payment integration: signup
 records what a member chose and the existing offline rails collect the money. No
 OpenAPI document until something outside this repository needs one. No MAC

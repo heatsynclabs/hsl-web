@@ -82,9 +82,36 @@ export function createArduinoController(options: ArduinoControllerOptions): Door
   }
 }
 
-export function createHttpTransport(baseUrl: string): ControllerTransport {
+/**
+ * How long to wait for the board before giving up on one request.
+ *
+ * It has to be longer than the slowest honest answer and shorter than a
+ * reconcile pass. Arming calls chirpAlarm twenty times at 300 ms, firmware line
+ * 517, so about six seconds is legitimate, and RECONCILE_INTERVAL_SECONDS
+ * defaults to sixty. Without a timeout node waits on undici's default of 300
+ * seconds, measured on node:24.20-alpine: five minutes in which the loop's
+ * running guard skips every tick, the API's status goes stale after two, remote
+ * control answers 503 and the public page reads closed. A wedged board is the
+ * ordinary failure of a 2013 Arduino on a shared LAN, so it must not be the one
+ * that blinds the service.
+ */
+export const CONTROLLER_TIMEOUT_MS = 15_000
+
+export function createHttpTransport(
+  baseUrl: string,
+  timeoutMs: number = CONTROLLER_TIMEOUT_MS,
+): ControllerTransport {
   return async (query: string): Promise<string> => {
-    const response = await fetch(`${baseUrl}${query}`)
+    const response = await fetch(`${baseUrl}${query}`, {
+      signal: AbortSignal.timeout(timeoutMs),
+    }).catch((cause: unknown) => {
+      throw new Error(
+        `The controller did not answer ${redactPassword(query)} within ${timeoutMs / 1000} ` +
+          'seconds. Nothing was changed and cards already on the controller still open the ' +
+          'door. Check that it is powered and on the LAN, and power cycle it if it is wedged.',
+        { cause },
+      )
+    })
     if (!response.ok) {
       throw new Error(
         `The controller answered ${response.status} to ${redactPassword(query)}. Every ` +

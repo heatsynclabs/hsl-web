@@ -94,8 +94,8 @@ typed client and the one session, `@hsl/schema` for the contracts and for
 `memberLevelLabel`. `vue`, `vue-router` and `vite`, all pinned in the workspace
 catalog. It talks to `services/api` over HTTP and to nothing else.
 
-The built bundle carries the 29 marks `@hsl/ui` inlines, which is most of its
-size. `packages/ui/README.md` records that cost and what would fix it.
+The built bundle is about 476 kB on disk. `@hsl/ui` inlines three marks rather
+than all 29, which is what keeps it that size; `packages/ui/README.md` says why.
 
 ## Polling on the door screen
 

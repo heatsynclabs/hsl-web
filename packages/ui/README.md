@@ -83,19 +83,19 @@ It imports nothing else in this repository.
 
 ## Marks
 
-`src/marks.ts` imports all 29 SVGs as raw strings with Vite's `?raw` query and
-maps them by file name. `Mark` writes the string into a span. Raw strings rather
-than components because the files are exported artwork that nobody edits by hand,
-and inlining means a mark never costs a request.
+`src/marks.ts` inlines three of the 29 SVGs as raw strings with Vite's `?raw`
+query and maps them by name. `Mark` writes the string into a span. Raw strings
+rather than components because the files are exported artwork that nobody edits
+by hand, and inlining means the app bar logo never costs a request.
 
-The cost is that all 29 files, 512 KB on disk, land in the bundle whether or not
-a mark is used. If that starts to matter, switch `markSources` to a lazy
-`import.meta.glob` and make `Mark` async.
+The three are the ones carrying `fill="currentColor"`, so they take their colour
+from the container and stay right when the theme flips: `hsl-mark-1c-current`,
+`hsl-mark-current` and `hsl-wordmark-current`.
 
-Prefer the three variants that carry `fill="currentColor"`, because they take
-their colour from the container and stay right when the theme flips:
-`hsl-mark-1c-current`, `hsl-mark-current` and `hsl-wordmark-current`. The other
-26 are fixed colour and are named for the ground they belong on.
+The other 26 are fixed colour, named for the ground they belong on, and ship as
+files rather than as bundle content. Importing all of them here would put about
+470 kB of path data into every app to render one logo in an app bar, which is
+more than the whole built admin app weighs.
 
 ## Tokens
 

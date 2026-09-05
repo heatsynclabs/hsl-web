@@ -57,6 +57,7 @@ export async function runReconcilePass(deps: LoopDependencies): Promise<Reconcil
     databaseCards: table.cards,
     controllerCards: await deps.controller.readCardTable(),
     ownedSlots: deps.ownedSlots,
+    databaseIssuedSlots: table.ownedSlots,
   })
 
   await applyPlan(deps, plan)

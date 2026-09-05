@@ -71,15 +71,26 @@ cutover goes badly.
 
 ## 3. Read the door controller's card table
 
-Point a browser at the controller and ask for its card table:
+The card table dump needs the privileged password, chained onto the command the
+way every other request chains it. A bare `?a` answers `Not logged in.` and
+nothing else.
 
 ```
-http://<controller>/?a
+curl -sS 'http://<controller>/?a&e=<the four hex characters>'
 ```
 
-Write down what comes back, or save the page. This is the only record of what
-the door actually believes right now, and the members database has at least one
-row that disagrees with it. You will need this in step 7.
+Expected: a `<pre>` block, a header line reading `UserNum: Usermask: TagNum:`,
+and then two hundred tab separated rows, slot 0 to slot 199. An unwritten slot
+reads back as the erased EEPROM, `255` and `FFFFFFFF`.
+
+Save the page. This is the only record of what the door actually believes right
+now, and the members database has at least one row that disagrees with it. You
+will need it in step 7.
+
+If the tag column reads `********` on every row, the board was built with
+`DEBUG` below 2, firmware line 105. Stop and read section 6 of `HANDOFF.md`
+before going further: the reconcile loop cannot read a card table it cannot see,
+and that is a decision about the firmware rather than about this import.
 
 ## 4. Stop the Rails application
 
@@ -97,15 +108,45 @@ curl -sS -o /dev/null -w '%{http_code}\n' https://<old-host>/
 Expected output: `503`, or a connection failure. Anything in the 200s means it
 is still serving.
 
-## 5. Build the new schema
+## 5. Put the dump where the import can reach it, and build an empty schema
+
+Everything from here runs in containers. The import runs inside the compose
+network, because that is the only place the database is reachable: `compose.yaml`
+publishes no port for `db`, and the connection string it uses carries the
+password from `secrets/db_password`. Running `node tools/import/main.ts` from
+the host does not work and is not worth making work.
 
 ```
-docker compose up -d db
-pnpm db:migrate
+cp members-<stamp>.dump legacy/members.dump
+make legacy-restore
 ```
 
-Expected output ends with drizzle reporting the migrations it applied and no
-errors. The target has to be migrated and completely empty. The import refuses a
+Expected output ends with `restored. Now run: make import ARGS=--dry-run`.
+`legacy/` is gitignored and excluded from the Docker build context, so the dump
+cannot reach a commit or an image layer.
+
+Then an empty target:
+
+```
+make reset CONFIRM=yes
+```
+
+`make reset` deletes the members database volume and rebuilds the schema from
+the migrations. It refuses without `CONFIRM=yes` on a host whose `.env` says
+`HSL_SCHEME=https`, because on any other day that command is a disaster. At
+cutover the database is empty and wiping it is the point.
+
+Expected: compose stops the stack, removes the volume, and brings `db`,
+`migrate`, `api` and `web` back. Confirm the schema is really there and really
+empty:
+
+```
+docker compose exec -T db psql -U hsl -d hsl -At \
+  -c "select count(*) from information_schema.tables where table_schema='public'" \
+  -c 'select count(*) from "user"'
+```
+
+Expected: `12`, then `0`. Twelve tables and no members. The import refuses a
 database that already holds members, and says so:
 
 ```
@@ -116,10 +157,7 @@ empty schema. Nothing was written.
 ## 6. Dry run
 
 ```
-export LEGACY_DATABASE_URL=postgres://reader@<old-host>:5432/members
-export DATABASE_URL=postgres://hsl@localhost:5432/hsl
-
-node --experimental-strip-types tools/import/main.ts --dry-run
+make import ARGS=--dry-run
 ```
 
 This does the entire import, prints both reports, and then rolls everything
@@ -179,7 +217,7 @@ with the member present to test their card.
 ## 8. Dry run again, with the decision made
 
 ```
-node --experimental-strip-types tools/import/main.ts --dry-run --accept-orphans
+make import ARGS="--dry-run --accept-orphans"
 ```
 
 The three refusals now read `ACCEPTED`, and the second block appears:
@@ -216,7 +254,7 @@ different places and should say the same thing.
 ## 9. Run it for real
 
 ```
-node --experimental-strip-types tools/import/main.ts --accept-orphans
+make import ARGS=--accept-orphans
 ```
 
 Same two blocks, then:
@@ -243,7 +281,8 @@ Expected: the members app loads and shows their own name.
 **Look at the card table the door service will write.**
 
 ```
-curl -sS -H "authorization: Bearer $DOOR_TOKEN" http://localhost:3000/api/door/card-table
+curl -sS -H "authorization: Bearer $(cat secrets/door_token)" \
+  https://<domain>/api/door/card-table
 ```
 
 Expected: card numbers of exactly eight uppercase hex characters, and slots
@@ -288,12 +327,25 @@ The import prints what it found and writes nothing. Work through the list.
 Nothing was written to the old database at any point, so there is nothing to
 undo there.
 
-For the new one, drop the schema and rebuild it:
+For the new one:
 
 ```
-docker compose exec db psql -U hsl -d hsl -c 'drop schema public cascade' -c 'create schema public'
-pnpm db:migrate
+make reset CONFIRM=yes
 ```
 
 Then start again at step 5. Bring the Rails application back up first if members
 are waiting.
+
+Do not reach for `drop schema public cascade` and a migrate instead. drizzle
+records what it has applied in its own `drizzle` schema, which that command
+leaves behind, so `drizzle-kit migrate` then prints
+`migrations applied successfully` over a database with no tables at all and the
+import dies on `relation "user" does not exist`. `make reset` deletes the
+volume, which takes both schemas with it. If something else in the database
+means you cannot delete the volume, drop both by name:
+
+```
+docker compose exec -T db psql -U hsl -d hsl \
+  -c 'drop schema public cascade' -c 'drop schema drizzle cascade' -c 'create schema public'
+docker compose run --rm migrate
+```

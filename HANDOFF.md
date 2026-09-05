@@ -14,24 +14,29 @@ runs on a laptop under Docker Compose, and `README.md` is the instructions.
 |---|---|---|
 | `packages/schema` | built | 26 tests, 4 migrations applied to a real Postgres |
 | `packages/ui` | built | 28 tests, rendered in a browser in both themes |
-| `packages/api-client` | built | 14 tests |
-| `services/api` | built | 207 tests against a real Postgres |
-| `services/door` | built, never spoken to hardware | 145 tests, 12 of them over a socket against a simulated board |
+| `packages/api-client` | built | 15 tests |
+| `services/api` | built | 223 tests against a real Postgres |
+| `services/door` | built, never spoken to hardware | 149 tests, 12 of them over a socket against a simulated board |
 | `apps/members` | built | 66 tests, walked through in a browser |
 | `apps/signup` | built | 33 tests, walked through in a browser |
 | `apps/admin` | built | 181 tests, walked through in a browser |
-| `tools/import` | built, run against the real dump | 23 tests, plus the run in section 2 |
+| `tools/import` | built, run against the real dump | 37 tests, 12 needing `LEGACY_DATABASE_URL`, plus the run in section 2 |
 | Compose stack | runs | brought up from nothing, every URL answers |
 | Backup and restore | works | `tools/restore-drill.sh` passes, in CI |
 | Deployment | not started | no host exists yet, see section 5 |
 
-700 tests. Lint, typecheck and the voice check are clean.
+721 tests, which is what `pnpm check` runs. `tools/import` is not a workspace
+package and has its own 37 and its own CI job. Lint, typecheck and the voice
+check are clean.
 
 14,939 lines of TypeScript, Vue and build scripts, and 9,965 lines of tests,
 fixtures and harnesses, counted across `apps`, `packages`, `services` and
-`tools` with build output excluded. 22 routes, 14 ADRs. The previous attempt was
+`tools` with build output excluded. 14 ADRs. The previous attempt was
 50,941 lines and deployed nothing; the difference is almost entirely enforcement
 machinery that is not here on purpose.
+
+25 routes, plus the better-auth handler, which serves five paths and answers 404
+for everything else it mounts.
 
 ## 2. What has been proven against real data
 
@@ -266,6 +271,160 @@ a service, a service importing an app, and a package importing a service; the
 voice check fails `pnpm lint` on a planted emoji and a planted banned word in a
 tracked file. The CI workflow's own scripts were run rather than read.
 
+### The deployment audit
+
+Ten dimensions on 2026-09-04, every finding above minor handed to two agents
+told to refute it, one by reproducing it and one by hunting for the guard
+elsewhere. Ninety-five survived. The question being asked was narrower than
+before: put this Docker stack on a host, set the environment variables, and does
+it work.
+
+24. **An emptied members database erased the card table off the controller.**
+    This is the one that matters. `make reset` against the wrong stack, a
+    restore that has not finished, `DATABASE_URL` pointed somewhere new, or step
+    13 of the import runbook all leave the members database with no card rows.
+    The API answers 200 with empty arrays in every one of those cases, and a
+    door service that has been running owns every slot, so the next pass
+    computed a clear for all 64 and nobody's fob opened the building.
+
+    Reproduced against `planReconcile` directly: `clears=64, slots 14..77`.
+    That is gate 2 of section 13 of `CONTRIBUTING.md` failing, and not because
+    this repository was down. It was up and confidently wrong, which is the
+    harder failure to see.
+
+    `planReconcile` now takes the API's own `ownedSlots` as
+    `databaseIssuedSlots` and withholds every clear when it is empty. That
+    distinguishes the two cases exactly: revoking a card leaves its row, so the
+    slot is still named; a database with no card rows at all names nothing.
+    Revoking every card in the lab still clears the controller. The pass reports
+    `card-table-clear-withheld` so somebody sees it happened. Four tests, unit
+    and loop level, each watched failing against a disabled guard.
+
+    `make reset` also refuses now on a host whose `.env` says `HSL_SCHEME=https`
+    unless `CONFIRM=yes`. A comment saying "local only" is not a guard.
+25. **The deployment that swallows every password reset is closed.** Section 7
+    recorded it and proposed the fix; this is the fix. `config.ts` refuses an
+    https origin whose `SMTP_URL` host is `mail`, which is the compose service
+    name of the development catcher and resolves nowhere else, so there is no
+    false positive. `SMTP_URL` is also parsed rather than accepted as any
+    non-empty string: nodemailer 9.1.1 recognises `smtp:`, `smtps:` and
+    `direct:` and silently ignores every other scheme, so a value with no scheme
+    used to fail at the first send rather than at boot. The message never
+    carries the value, because the value carries the relay password.
+
+    Two tests in the suite agreed with the defect and had to be inverted: the
+    `complete` production fixture in `config.test.ts` was the mail catcher, and
+    `password-reset.test.ts` asserted that `smtp://localhost:1025` on an https
+    origin did not throw. The mail service is behind a `dev` profile as well, so
+    it cannot start on a public host at all.
+26. **Nothing set a network timeout, and the cost was measured.** Node 24.20,
+    the exact tag the images pin, throws `Headers Timeout Error` after 302.4
+    seconds against a server that accepts the connection and never answers.
+    That is undici's default, and a wedged Arduino on a shared LAN is exactly
+    that shape. The loop's `running` guard then skips every 60 second tick for
+    five minutes, the API's status goes stale after two, remote control answers
+    503 and the public page reads closed.
+
+    Every one of the four shipped call sites is bounded now. The controller gets
+    15 seconds, which is above the six that arming legitimately takes,
+    `chirpAlarm` twenty times at 300 ms at firmware line 517, and well under a
+    pass. The door service gets 10 on the API, the browser client 20, and the
+    admin app's hand-written sign out 10. The controller timeout is tested
+    against a real socket that accepts and never answers, and watched failing.
+27. **The production members dump was baked into a Docker image layer.**
+    `.dockerignore` excluded `secrets` and not `legacy`, and the documented
+    import puts a `pg_dump` of the whole Rails database at
+    `legacy/members.dump`. `COPY . .` in the service Dockerfile carried it into
+    the image. Confirmed by building the `tools` target and listing `/repo`,
+    which held `legacy/` and `.env`. Git history was clean and stayed clean;
+    this was the second copy nobody was looking at. `legacy`, `backups`,
+    `*.dump`, `*.sql.gz`, `.env` and `coverage` are excluded now.
+28. **A failing request wrote member records to the log.** `app.onError` logged
+    the error object. drizzle carries every bind parameter on it, once in the
+    message and again in `params`, and pg puts the offending value in `detail`.
+    Reproduced against the real schema: a duplicate email during signup put the
+    new member's name, email, phone, postal code and emergency contact in the
+    log, twice. On a token-bearing table it is a session token or a reset token.
+    The handler now logs the statement, which is parameterised, plus the
+    Postgres code, table and constraint, and nothing else. Five tests.
+29. **Nothing bounded the container logs.** All four services ran on the default
+    json-file driver with no rotation, so the disk fills and takes the members
+    database and the door status with it. One anchor, applied to every service.
+30. **Caddy logged nothing per request**, because the access log is opt in and
+    nothing opted in, while `docs/operations.md` sent the 2am volunteer to it
+    first. It also set no security headers and no request size limit. The
+    Caddyfile now carries `log`, four headers and a 1 MB body limit, each proved
+    against a throwaway Caddy before it went in: headers on both static and
+    proxied responses, deep links unaffected, 100 kB accepted and 2 MB refused
+    with 413. The two claims `operations.md` made about that log turn out to be
+    true for the failure case, measured rather than assumed, and the document
+    now says which half is which.
+31. **A failed migration took the running site down.** `docker compose up -d`
+    recreates the api and web containers and only then runs migrate, confirmed
+    with `--dry-run`. `make up` now builds, migrates as its own step, and starts
+    the stack, so a bad migration stops the deploy with the site still serving.
+32. **Secrets were written 0600 and the containers read them as uid 1000.**
+    Compose mounts a file secret as a plain bind mount and ignores `uid`, `gid`
+    and `mode`, so on a Linux host where the deployer is not uid 1000 the
+    migrate container dies with EACCES and the api never starts. The directory
+    is 0700 and the files 0644 now, on both hosts.
+33. **`tools/backup.sh` wrote the whole members database world readable**, with
+    no `umask` and no `chmod`, two files away from `make secrets` writing 0600.
+    It sets `umask 077`, a 0700 directory and 0600 files now.
+34. **The restore drill's readiness check raced the Postgres entrypoint.**
+    `pg_isready` answers during the image's init phase, before the entrypoint
+    shuts the temporary server down and starts the real one. It passed five for
+    five on an idle laptop and failed repeatedly under load, which is what a CI
+    runner is. It waits for `PostgreSQL init process complete` and then a real
+    query now.
+35. **The import runbook could not be run on the host it targets.** Steps 5, 6,
+    8, 9 and 10 called `node tools/import/main.ts` and `pnpm db:migrate` from
+    the host against `localhost:5432`, and `compose.yaml` publishes no port for
+    the database and the connection string carried no password. They use the
+    containerised `make import` path now, which is the one that works.
+
+    Its undo step was worse than not working: `drop schema public cascade`
+    followed by a migrate leaves drizzle's own `drizzle` schema behind, so
+    `drizzle-kit migrate` prints `migrations applied successfully` over a
+    database with no tables. Reproduced. It is `make reset CONFIRM=yes` now,
+    with the manual form dropping both schemas by name.
+
+    Step 3 asked for the controller's card table with a bare `?a`, which the
+    firmware answers `Not logged in.` The password has to be chained on.
+36. **There is no tool that puts a database back.** `tools/restore.sh` restores
+    into a throwaway copy and never touches the live database, which is correct
+    and is not a recovery. `docs/runbooks/go-back.md` is new and covers the
+    three situations separately: a bad deploy, a bad database, and a cutover
+    that has to be undone. The restore renames the current database rather than
+    dropping it, so a wrong dump does not cost the last hour, and the commands
+    were run against a throwaway Postgres before being written down.
+37. **The deploy documentation stopped at `make up`.** It never said how the
+    first admin comes to exist, never mentioned the import or its ordering, and
+    gave nothing to check afterwards. A volunteer following it exactly ended
+    with a stack nobody could administer and no members in it. `operations.md`
+    now covers DNS before first start, the four `.env` edits, the secret modes,
+    the SMTP replacement, the first admin on both an imported and an empty
+    database, and four checks that each fail differently.
+
+Smaller, and each verified: `docs/architecture.md`'s route table was missing six
+routes and its data table two of the twelve; `CONTRIBUTING.md` required an
+OpenAPI document that `0003` declines to build and claimed coverage is collected
+when nothing collects it; three privileged routes had no refusal test, so
+deleting `requireAdmin` from all three left every test green, and five tests were
+watched catching it; `services/door/src/domain/slots.ts` carried a second
+implementation of the lowest free slot rule that only its own test called, which
+is section 5's one place rule and door permission at that; `.nvmrc` pinned Node
+22 while every image runs 24.20, so CI tested a runtime that never ships. Several
+package READMEs described things that were not there, notably `marks.ts`
+inlining all 29 marks when it inlines three.
+
+What was checked and came back clean: git history holds nothing member shaped,
+5.5 MB with no dump and no secret ever committed; all three images build from the
+current tree; `PUBLIC_ORIGIN` with a trailing slash does not break sign in,
+which was suspected and disproved; the reset link's `redirectTo` is validated
+against the trusted origin list, so an attacker cannot point it at their own
+domain; `/api/auth/change-email` and `/api/auth/delete-user` are disabled.
+
 ## 4. Facts that overrule the older documents
 
 `docs/legacy-system.md` has the full list with sources. The ones that changed
@@ -336,22 +495,8 @@ Beyond section 3. None of these is hidden in the code.
   but that board answers the bytes this repository read out of the firmware and
   therefore agrees with that reading by construction. See
   `docs/decisions/0014-a-simulated-controller.md`.
-- **Nothing anywhere sets a network timeout.** All three paths use a bare
-  `fetch`: the door service to the controller in
-  `adapters/openaccess-arduino/controller.ts`, the door service to the API in
-  `link.ts`, and the browser to the API in `packages/api-client`. The first is
-  the one that matters. Arming the alarm chirps twenty times at 300 ms, firmware
-  line 517, so the board legitimately takes about six seconds to answer, and a
-  board that has stopped answering leaves the request hanging on the runtime's
-  default rather than on anything chosen here. The reconcile pass awaits it, so
-  one hung request stalls reconciliation until it gives up. A timeout has to be
-  longer than six seconds and shorter than a pass.
-- Only one runbook exists, `import-the-members-database.md`, against section 10
-  of `CONTRIBUTING.md`, which asks for one for anything a volunteer might do at
-  2am. `docs/operations.md` covers deploying and what to look at when something
-  is wrong, and there is nothing written for the cutover itself or for going
-  back.
-- No deploy workflow. Deployment is four lines by hand in `docs/operations.md`.
+- No deploy workflow. Deployment is `git pull` and `make up` by hand, per
+  `docs/operations.md`. That is a deliberate choice while one person deploys.
 - A stack trace from either service points into a bundled file rather than into
   a source file. `docs/decisions/0013-services-ship-as-a-bundle.md` says why,
   and rebuilding the same commit gives the same line numbers.
@@ -359,7 +504,11 @@ Beyond section 3. None of these is hidden in the code.
   `apps/admin/src/App.vue` posts to `/api/auth/sign-out` with `fetch`. ADR 0012
   moved the members app onto better-auth's own client and stopped there, because
   the client costs 28.94 kB in a browser bundle and the admin app is used by a
-  handful of people. The path is named in a comment beside it.
+  handful of people. The path is on the served allow list in `auth.ts`, the call
+  is bounded by a timeout, and the path is named in a comment beside it.
+- better-auth's own client, which the members app uses for sign in, sign out and
+  reset, sets no timeout of its own. The four call sites this repository writes
+  are bounded; that one is the library's.
 - The `current_skills` and `desired_skills` columns are unbounded `text`, the
   response contract has no maximum and the import copies what Rails held, but
   the request contract caps both at 2,000 characters. So the import can write a
@@ -367,39 +516,40 @@ Beyond section 3. None of these is hidden in the code.
   sends only what changed, and a member over the limit can delete characters and
   save, which was checked in a browser against a planted 2,005 character value.
   The import preflight reports the rows so nobody meets one by surprise.
-
-- **A deploy can swallow every password reset silently, and the runbook says it
-  cannot.** `make secrets` writes `smtp://mail:1025` into `secrets/smtp_url`,
-  the development mail catcher. The guard in `services/api/src/config.ts` only
-  checks that `SMTP_URL` is defined, and that placeholder is defined, so it
-  passes. The `mail` service in `compose.yaml` carries no profile, so mailpit
-  starts on the public host too and the SMTP connection succeeds. A deploy where
-  somebody ran `make secrets` and did not replace that one file therefore starts
-  cleanly on https, answers every reset request with success, and posts every
-  email into a web inbox nobody reads. The 31 imported members for whom reset is
-  the only way in are locked out with nothing in any log to say so.
-  `docs/operations.md` asserted that the API refuses to start in exactly this
-  case, which it does not; that sentence has been corrected rather than the
-  code. The fix is two small changes: refuse an `smtp://mail:` URL when the
-  origin is https, and put the mail service behind a compose profile.
 - **Section 12 says door logs are readable by the member they concern, and no
   route lets a member read theirs.** `GET /api/door/events` is admin only, which
-  satisfies the "nobody else" half and not the first one. Deciding whether to
-  build that route is a small piece of work nobody has taken.
-- Three privileged routes have no refusal test, against section 4 of
-  `CONTRIBUTING.md`: `POST /api/door/sync` and `GET /api/door/events` have no
-  authorization test at all, and `DELETE /api/members/:id` has one for a member
-  and none for anonymous. All three are `requireAdmin` and were checked by hand
-  against every role, so the rules hold. The tests do not exist.
+  satisfies the "nobody else" half and not the first one, and there is now a
+  refusal test for a member asking. Building the member-facing half is a small
+  piece of work nobody has taken.
 - The boundaries gate does not enforce the last rule in section 5. An app
   importing `packages/schema/src/tables.ts` directly, by relative path or by
   subpath, passes lint: the dependency direction is checked and "a package
   exports through its index" is not. `boundaries/entry-point` is the rule that
   would, and it is not configured. Nothing in the tree violates it today.
+- `door_events.actor_id` is a column with a foreign key that nothing writes and
+  nothing reads. Removing it is a migration, and migrations against a table the
+  database refuses to update are worth doing deliberately rather than in passing.
+- Four runbooks' worth of 2am work is still unwritten: rotating a leaked secret,
+  the certificate not renewing, the disk filling, and moving the card at slot
+  200. `docs/runbooks/` has the import and going back, and `docs/operations.md`
+  covers deploying and what to look at when something is wrong.
+- No container has a memory, CPU or PID limit. One runaway process can take the
+  host down, and the door status with it. The logs are bounded now; this is not.
+- Backups are written to the host they protect, and nothing prunes them or
+  copies them anywhere else. `caddy_data`, which holds the TLS certificate and
+  the ACME account key, is not backed up at all; losing it means Caddy asks for
+  a new certificate, which is an inconvenience rather than data loss.
+- `tools/restore-drill.sh` proves `pg_dump` and `pg_restore` round trip on the
+  image this stack runs. It does not call `tools/backup.sh` or
+  `tools/restore.sh`, so those two have never run in CI, and `docs/operations.md`
+  now says so rather than implying otherwise.
 - `/space_api.json` has never been proven byte for byte against the live one.
   `README.md` says parity gets proven on a test hostname before the hostname
   moves, and nothing does that yet. The lab website and an ESP8266 status LED
   both read it, and neither is in this repository.
+- The 95 findings of the deployment audit are not all fixed. What is left is
+  mostly documentation detail and small duplication in `apps/admin`, and the
+  full list with evidence is in the audit transcript rather than in this file.
 
 ## 8. Open licence questions
 

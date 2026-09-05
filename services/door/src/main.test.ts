@@ -39,13 +39,20 @@ function lab(controllerCards: CardTableRow[] = []): Lab {
   const issuedSlots: number[] = []
 
   const api = new Hono()
-  api.get(CARD_TABLE_PATH, (context) =>
-    context.json({
+  api.get(CARD_TABLE_PATH, (context) => {
+    // A card row is written when the card is assigned and stays when it is
+    // revoked, so a slot the database has ever claimed keeps appearing here.
+    // Deriving it rather than asking each test to maintain it keeps the fake
+    // from answering a shape the real API never sends.
+    for (const card of databaseCards) {
+      if (!issuedSlots.includes(card.slot)) issuedSlots.push(card.slot)
+    }
+    return context.json({
       generatedAt: new Date().toISOString(),
       cards: databaseCards,
       ownedSlots: issuedSlots,
-    }),
-  )
+    })
+  })
   api.get(COMMANDS_PATH, (context) => context.json({ commands: queuedCommands.splice(0) }))
   api.post(REPORT_PATH, async (context) => {
     const body = await context.req.json()
@@ -134,6 +141,28 @@ describe('the reconcile loop', () => {
     expect(plan.clears).toEqual([199])
     expect(space.device.cards.has(199)).toBe(false)
     expect(space.device.cards.get(14)).toEqual(CARD_14)
+  })
+
+  /**
+   * The whole system being up and confidently wrong is the way gate 2 of
+   * section 13 breaks. An emptied members database answers 200 with empty
+   * arrays, and this service owns every slot by then, so the pass has to keep
+   * the controller as it is and say so.
+   */
+  it('keeps every card on the controller when the members database has been emptied', async () => {
+    const space = lab()
+    space.databaseCards.push(CARD_14, CARD_199)
+    await runReconcilePass(space.deps)
+    expect(space.device.cards.get(14)).toEqual(CARD_14)
+
+    space.databaseCards.splice(0)
+    space.issuedSlots.splice(0)
+    const plan = await runPass(space.deps).then(() => space.deps)
+
+    expect(space.device.cards.get(14)).toEqual(CARD_14)
+    expect(space.device.cards.get(199)).toEqual(CARD_199)
+    expect(kinds(space)).toContain('card-table-clear-withheld')
+    expect(plan.ownedSlots.has(14)).toBe(true)
   })
 
   it('carries the card at slot 200 without crashing, and reports it as unusable', async () => {

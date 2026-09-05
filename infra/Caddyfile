@@ -13,6 +13,34 @@
 # The members app is the origin everything shares, so the session cookie is a
 # plain first-party cookie and there is no CORS anywhere in the system.
 {$HSL_SCHEME}://{$HSL_DOMAIN} {
+	# Caddy writes no access log unless it is asked to, so `docker compose logs
+	# web` answered nothing at all on a healthy stack while docs/operations.md
+	# sent the 2am volunteer to it first. Cookie and Authorization come out as
+	# REDACTED by default, which was measured rather than assumed.
+	log
+
+	header {
+		# The members portal and the admin portal both run on this hostname, and
+		# the admin two-step confirmations open a building. Nothing here is ever
+		# meant to be framed.
+		Content-Security-Policy "frame-ancestors 'none'"
+		X-Content-Type-Options nosniff
+		# Member ids appear in admin paths, so a referrer never leaves the site.
+		Referrer-Policy same-origin
+		# Ignored over http, which is what a laptop serves. Backing this out on
+		# the real hostname means waiting out the max-age, so it is a year rather
+		# than anything longer, and no preload.
+		Strict-Transport-Security "max-age=31536000"
+	}
+
+	# Nothing here accepts an upload, and the largest honest request is a profile
+	# with two 2,000 character text fields. A member was able to push megabytes
+	# into their own name through better-auth before the allow list closed that
+	# path; this is the same limit one layer out, and it applies to the API too.
+	request_body {
+		max_size 1MB
+	}
+
 	handle /api/* {
 		reverse_proxy api:3000
 	}

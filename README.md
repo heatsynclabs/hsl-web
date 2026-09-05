@@ -107,9 +107,9 @@ Unlocking the rear door stays visible and stays refused, with the 2018 lab
 decision written beside it, so nobody adds it back by mistake.
 
 Every screen has a theme toggle. Light is the default and the choice is
-remembered per browser.
+remembered per browser. This is the profile tab, in the dark theme.
 
-![The same screen in the dark theme](docs/screenshots/members-dark.jpg)
+![A member's profile in the dark theme](docs/screenshots/members-dark.jpg)
 
 Forgetting a password is a real path, not a dead link. The email arrives in the
 mail catcher at http://localhost:8026, and the link lands here.
@@ -192,9 +192,18 @@ pnpm dev
 pnpm check      # lint, typecheck, test
 ```
 
-691 tests. The ones that need a database read `DATABASE_URL` and skip with a
-message when it is not set. The door service tests run against a fake controller
-that speaks the real wire protocol, so they need no hardware.
+721 tests, which is what `pnpm check` runs. The ones that need a database read
+`DATABASE_URL` and skip with a message when it is not set. The door service
+tests run against a fake controller that speaks the real wire protocol, so they
+need no hardware.
+
+`tools/import` is not a workspace package, so `pnpm check` does not reach it. It
+has 37 tests of its own and its own CI job, and 12 of them need
+`LEGACY_DATABASE_URL`:
+
+```
+node_modules/.bin/vitest run --root tools/import
+```
 
 There is a simulated door controller in `services/door/src/simulator`, so the
 door service can be run and the whole card enrolment loop walked without the

@@ -5,12 +5,13 @@ record, the member's own cards and certifications, and the door controls. Sign
 in lives here too, because Caddy serves all three apps and the API from one
 origin and they share one session cookie.
 
-Four routes:
+Five routes:
 
 | Path | Screen |
 |---|---|
 | `/sign-in` | email, password, and the link to the reset form |
 | `/forgot-password` | asks the API to send a reset link |
+| `/reset-password` | where the emailed link lands. Reachable while signed in, because a member who is signed in on one device can still be resetting on another |
 | `/` | profile, membership, door access and certifications |
 | `/door` | the two door tiles, the controls, and what this browser has sent |
 

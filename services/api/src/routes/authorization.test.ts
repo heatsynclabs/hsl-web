@@ -501,6 +501,61 @@ describeDatabase('authorization', () => {
     })
   })
 
+  /**
+   * Section 4: a rule without a refusal test is untested. These three are
+   * requireAdmin in the source and were the three with no case at all, so
+   * deleting the middleware left every test in this service green.
+   */
+  describe('the admin door screens', () => {
+    it('pushes the card table for an admin', async () => {
+      const response = await client.api.door.sync.$post({}, { headers: admin.headers })
+      expect(response.status).toBe(202)
+    })
+
+    it('refuses a card table push from a member with card access', async () => {
+      const response = await client.api.door.sync.$post({}, { headers: cardHolder.headers })
+      expect(response.status).toBe(403)
+    })
+
+    it('refuses a card table push from anonymous', async () => {
+      expect((await client.api.door.sync.$post()).status).toBe(401)
+    })
+
+    it('returns the door history to an admin', async () => {
+      const response = await client.api.door.events.$get({}, { headers: admin.headers })
+      expect(response.status).toBe(200)
+    })
+
+    /**
+     * Section 12: door logs are readable by the member they concern and by
+     * admins, and by nobody else. There is no member-facing route yet, so this
+     * is the half that has to hold.
+     */
+    it('refuses the door history to a member, whose own reads are in it', async () => {
+      const response = await client.api.door.events.$get({}, { headers: member.headers })
+      expect(response.status).toBe(403)
+    })
+
+    it('refuses the door history to anonymous', async () => {
+      expect((await client.api.door.events.$get()).status).toBe(401)
+    })
+
+    it('refuses the card table view to a member who is not an admin', async () => {
+      const response = await client.api.door['card-table-view'].$get(
+        {},
+        { headers: member.headers },
+      )
+      expect(response.status).toBe(403)
+    })
+  })
+
+  describe('DELETE /api/members/:id', () => {
+    it('refuses an anonymous removal', async () => {
+      const response = await client.api.members[':id'].$delete({ param: { id: member.member.id } })
+      expect(response.status).toBe(401)
+    })
+  })
+
   describe('GET /space_api.json', () => {
     it('is public', async () => {
       const response = await client['space_api.json'].$get()

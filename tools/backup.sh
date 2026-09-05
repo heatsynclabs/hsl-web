@@ -6,10 +6,16 @@
 # pg_dump.
 set -eu
 
+# This writes every member's name, address, phone number, emergency contact,
+# payment history and password hash to disk. `make secrets` two files away
+# writes mode 600; a backup of the whole database deserves the same.
+umask 077
+
 out_dir="${HSL_BACKUP_DIR:-/var/backups/hsl}"
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 
 mkdir -p "$out_dir"
+chmod 700 "$out_dir"
 
 docker compose exec -T db pg_dump -U hsl -Fc hsl > "$out_dir/hsl-$stamp.dump"
 
@@ -17,6 +23,8 @@ docker compose exec -T db pg_dump -U hsl -Fc hsl > "$out_dir/hsl-$stamp.dump"
 # cluster fails on the first GRANT without them.
 docker compose exec -T db pg_dumpall -U hsl --roles-only --no-role-passwords \
   > "$out_dir/roles-$stamp.sql"
+
+chmod 600 "$out_dir/hsl-$stamp.dump" "$out_dir/roles-$stamp.sql"
 
 echo "wrote $out_dir/hsl-$stamp.dump"
 echo "wrote $out_dir/roles-$stamp.sql"

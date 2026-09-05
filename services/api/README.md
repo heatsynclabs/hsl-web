@@ -29,6 +29,13 @@ than on the first request.
 | `LEGACY_PEPPER` | empty unless a pepper is ever found in the Rails configuration. See `docs/decisions/0004-keep-bcrypt.md` |
 | `DOOR_STATUS_STALE_SECONDS` | how long the last door report stays trustworthy. Defaults to 120 |
 | `SPACE_API_TEMPLATE_PATH` | the SpaceAPI document the lab edits. Without it a minimal built-in template is served |
+| `SMTP_URL` | where password reset mail goes. `SMTP_URL_FILE` reads it from a Compose secret. Must be an `smtp://` or `smtps://` URL with a host. On an https origin the API refuses to start without it, and refuses the `smtp://mail:` development catcher that `make secrets` writes as a placeholder |
+| `MAIL_FROM` | the envelope sender. Defaults to `HeatSync Labs <noreply@heatsynclabs.org>` |
+
+better-auth mounts about thirty endpoints under `/api/auth` and this service
+serves five of them. `SERVED_AUTH_PATHS` in `src/auth.ts` is the list, and it is
+the one place to edit when an app needs another one. Two of the endpoints it
+does not serve write to the member row past the contracts in `@hsl/schema`.
 
 ## Testing it
 

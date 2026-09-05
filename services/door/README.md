@@ -88,7 +88,8 @@ Rear unlock is refused, by the lab decision of 2018-02-22. The refusal is in
 | `CONTROLLER_PASSWORD`, `CONTROLLER_PASSWORD_FILE` | none | the privileged password |
 | `API_URL` | none | the public members API, reached outbound |
 | `DOOR_TOKEN`, `DOOR_TOKEN_FILE` | none | the credential the two hosts share |
-| `PORT` | 8080 | the loopback port |
+| `PORT` | 8080 | the port the local HTTP surface listens on |
+| `HOST` | 127.0.0.1 | the interface it binds. Must be `0.0.0.0` inside a container, because a container's own loopback is not reachable from the host, and `infra/door/compose.yaml` sets it. The publish is what restricts it to the lab host |
 | `RECONCILE_INTERVAL_SECONDS` | 60 | how often a pass runs |
 
 ## Running it against a simulated controller

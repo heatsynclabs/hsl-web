@@ -4,6 +4,13 @@ name: hsl-door
 
 services:
   door:
+    # The same bound as the public host. An unrotated log on the lab machine
+    # fills a disk and takes the door service with it.
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '5'
     build:
       context: ../..
       dockerfile: services/door/Dockerfile
@@ -23,6 +30,19 @@ services:
     # Bound to loopback. The API is reached outbound; nothing reaches in.
     ports:
       - "127.0.0.1:8080:8080"
+    # /healthz says nothing about the building and needs no credential, which is
+    # what makes it usable here. It answers while the process is up; it does not
+    # mean the controller is answering.
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://localhost:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
 secrets:
   controller_password:

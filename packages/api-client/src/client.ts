@@ -47,6 +47,8 @@ export interface ClientOptions {
   baseUrl: string
   /** For tests, and for anything that carries its own cookie jar. */
   fetch?: typeof globalThis.fetch
+  /** How long to wait before giving up. Defaults to REQUEST_TIMEOUT_MS. */
+  timeoutMs?: number
 }
 
 interface Call<Schema extends z.ZodType> {
@@ -56,6 +58,13 @@ interface Call<Schema extends z.ZodType> {
   body?: unknown
 }
 
+/**
+ * How long a screen waits before saying it could not reach the API. Without it
+ * a server that accepts the connection and stops answering leaves a member
+ * looking at a spinner that never resolves, with no way back but a reload.
+ */
+export const REQUEST_TIMEOUT_MS = 20_000
+
 async function fetchOrThrow(options: ClientOptions, call: Call<z.ZodType>): Promise<Response> {
   const http = options.fetch ?? globalThis.fetch
   const sending = call.body !== undefined
@@ -64,6 +73,7 @@ async function fetchOrThrow(options: ClientOptions, call: Call<z.ZodType>): Prom
     return await http(options.baseUrl + call.path, {
       method: call.method,
       credentials: 'include',
+      signal: AbortSignal.timeout(options.timeoutMs ?? REQUEST_TIMEOUT_MS),
       headers: sending ? { 'content-type': 'application/json' } : undefined,
       body: sending ? JSON.stringify(call.body) : undefined,
     })

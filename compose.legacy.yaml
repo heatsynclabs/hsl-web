@@ -15,7 +15,10 @@ services:
     # Production runs Postgres 8.4. 9.6 is the oldest image that still exists
     # and it restores an 8.4 dump without complaint.
     image: postgres:9.6
-    restart: unless-stopped
+    # Deliberately not unless-stopped. This holds a full copy of the pre-cutover
+    # members database, so it should not quietly come back after a host reboot
+    # and sit there for a year. The runbook says when to remove it.
+    restart: 'no'
     environment:
       POSTGRES_USER: legacy
       POSTGRES_PASSWORD: legacy

@@ -15,54 +15,137 @@ development.
 
 ## The public host
 
+You need a machine with Docker, a DNS name already pointing at it, and ports 80
+and 443 reachable. Caddy asks Let's Encrypt for a certificate on first start, so
+the name has to resolve before you begin or the first request answers with a TLS
+error and nothing says why.
+
 ```
 git clone https://github.com/heatsynclabs/hsl-web
 cd hsl-web
 cp .env.example .env
+```
+
+Now edit `.env`, before anything is started. For a real deployment:
+
+```
+HSL_PUBLIC_ORIGIN=https://members.heatsynclabs.org
+HSL_DOMAIN=members.heatsynclabs.org
+HSL_SCHEME=https
+HSL_HTTP_PORT=80
+HSL_HTTPS_PORT=443
+```
+
+and delete the `COMPOSE_PROFILES=dev` line, which starts the development mail
+catcher. `HSL_PUBLIC_ORIGIN` has to be the exact URL a browser types, port and
+all: the session cookie is checked against it, and a mismatch refuses every sign
+in. When that happens the API logs `Invalid origin: <what was sent>` beside the
+value it expected, so `docker compose logs api` is the place to look.
+
+Then the secrets:
+
+```
 make secrets                # writes secrets/, never overwrites an existing file
+```
+
+That writes four files and leaves the directory at 0700 with the files at 0644.
+The modes are deliberate: Compose mounts a file secret as a plain bind mount and
+ignores `uid`, `gid` and `mode`, and the service images run as the `node` user,
+uid 1000. A 0600 file owned by the deploying user is unreadable inside the
+container, and the deploy dies with `EACCES` on a secret. The private directory
+is what keeps other host users out.
+
+One of the four is a placeholder. Replace it:
+
+```
+printf '%s' 'smtps://user:password@smtp.example.org:465' > secrets/smtp_url
+```
+
+`make secrets` writes `smtp://mail:1025`, the development mail catcher, and the
+API refuses to start on an https origin while that value is still there. It says
+so by name. Password reset is the only way in for the 31 imported members who
+have never had a password, so a deployment that cannot send mail is a deployment
+that locks people out silently.
+
+```
 make up
 ```
 
-Edit `.env` before `make up`. For a real deployment that means
-`HSL_PUBLIC_ORIGIN=https://members.heatsynclabs.org`, `HSL_DOMAIN` to match
-without the scheme, `HSL_SCHEME=https`, and the ports back to 80 and 443.
+`make up` builds the images, runs the migrations as their own step, and only
+then starts the stack. The migration runs first on purpose: `docker compose up`
+recreates the api and web containers before it runs migrate, so a migration that
+fails would take the running site down and leave nothing to fall back on.
 
-`HSL_PUBLIC_ORIGIN` has to be the exact URL a browser types, port and all. The
-session cookie is checked against it, so a mismatch refuses every sign in with
-"invalid origin" and nothing in the logs says why.
+## The first admin
 
-Then put the real SMTP URL in `secrets/smtp_url`. `make secrets` writes a
-placeholder pointing at the development mail catcher.
+A fresh install has nobody who can reach the admin portal, and every route that
+could grant admin already needs one. There is one door in from outside the
+application and it needs a shell on the host.
 
-Nothing checks that you did. The API refuses to start on https with no SMTP URL
-at all, and the placeholder is a URL, so it starts. The mail catcher runs on
-this host too, so the send succeeds and every password reset lands in an inbox
-nobody reads. Password reset is the only way in for the 31 imported members who
-have never had a password. Replace the file, then prove it: ask for a reset for
-an address you control and read the mail. See `HANDOFF.md` section 7.
+If you are importing the old members database, do that first: the import refuses
+to write into a database that already holds members, so a signup made before the
+import blocks it. See `docs/runbooks/import-the-members-database.md`. Then:
 
-`make up` is `docker compose up -d --build`. Compose refuses to start when a
-value in `.env` is missing, so a misconfigured host fails at
-`docker compose config` with a readable message rather than at runtime.
+```
+make admin EMAIL=someone@heatsynclabs.org
+```
 
-Migrations run as their own container that the API waits on. Two API containers
-can never race to migrate, and a failed migration stops the deploy rather than
-leaving a service running against a half migrated schema.
+with the address of a member the import carried.
+
+On a lab with no old database, somebody signs up at `https://<domain>/signup`
+first, choosing their own password, and then you run the same command with their
+address. `make admin` refuses to create a member: an account has to belong to
+the person who set its password.
+
+## Proving the deploy worked
+
+Four checks, in this order. Each one fails differently, so a failure tells you
+where to look.
+
+```
+docker compose ps
+```
+
+Expected: `db` healthy, `api` healthy, `web` running, `migrate` exited 0. No
+`mail`.
+
+```
+curl -sS https://<domain>/space_api.json
+```
+
+Expected: a JSON document with `open` and `status` keys. This is the URL the lab
+website and the ESP8266 status LED read, so it answering is the contract with
+things outside this repository. A TLS error here means DNS or the certificate; a
+502 means the API is not up.
+
+Sign in through the browser as the admin from the step above. That proves the
+cookie, the origin and the database together, which is what nothing else proves.
+
+Ask for a password reset for an address you control, and read the mail. Nothing
+else tells you the SMTP URL is right, and the guard at boot only proves it is not
+the placeholder.
 
 ## The lab host
 
 ```
 cd infra/door
 cp .env.example .env        # CONTROLLER_URL and API_URL
-mkdir -p secrets
+mkdir -p secrets && chmod 700 secrets
 printf '%s' '<the controller password>' > secrets/controller_password
 printf '%s' '<the door token from the public host>' > secrets/door_token
-chmod 600 secrets/*
+chmod 644 secrets/*
 docker compose up -d --build
 ```
 
 The door token is the same value as `secrets/door_token` on the public host. It
-is the only credential the two hosts share.
+is the only credential the two hosts share. The modes match the public host and
+for the same reason: the container reads these as uid 1000, and the private
+directory is what keeps other host users out.
+
+The controller password is the four hex characters the board reads after `e=`,
+not the C literal from the sketch. `PRIVPASSWORD` is declared as `0x1234`, and
+the value to write here is `1234`. The service refuses to start on anything
+else and says so.
 
 ## Development
 
@@ -97,6 +180,10 @@ make backup                       # writes a dump and a roles file
 ./tools/restore.sh <dump file>    # restores into a throwaway copy and counts rows
 ```
 
+`tools/restore.sh` checks a dump. It never writes over the live database, which
+is deliberate. Putting a database back is in `docs/runbooks/go-back.md`, as
+commands somebody types rather than a script they can run by accident.
+
 `pg_dump` refuses to read a server newer than itself, so the backup runs
 `pg_dump` from inside the database container. Do not replace it with a locally
 installed `pg_dump`.
@@ -108,9 +195,19 @@ Schedule it from host cron rather than a sleeping container, so it is visible in
 17 3 * * * cd /srv/hsl && ./tools/backup.sh >> /var/log/hsl-backup.log 2>&1
 ```
 
-A backup nobody has restored is not a backup. `tools/restore-drill.sh` runs in CI
-on every change: it loads a fixture, dumps it, drops the database, restores it,
-and fails if the rows do not come back.
+The dump and the roles file are written 0600 in a 0700 directory. They hold
+every member's name, address, phone number, emergency contact, payment history
+and password hash, so they are treated the way `make secrets` treats a secret.
+
+A backup nobody has restored is not a backup. `tools/restore-drill.sh` runs in
+CI on every change: it loads a fixture into a throwaway Postgres, dumps it,
+drops the database, restores it, and fails if the rows do not come back.
+
+What it proves is that `pg_dump` and `pg_restore` round trip on the image this
+stack runs. It does not call `tools/backup.sh` or `tools/restore.sh`, so it is
+not proof that those two scripts work. Running `make backup` and then
+`./tools/restore.sh` on the dump it wrote is, and it is worth doing once on the
+host before you rely on the cron line.
 
 ## Deploying a change
 
@@ -144,11 +241,16 @@ docker compose logs -f api
 curl -s https://<domain>/space_api.json  # the public status contract
 ```
 
-Start with the Caddy log. It is the only one that says which layer is down: a
-line reading `dial tcp 172.21.0.4:3000: connect: connection refused` means the
-API is not answering, and you have the answer before you have opened anything
-else. It redacts the Cookie and Authorization headers, so it is safe to paste
-into a chat while you ask for help.
+Start with the Caddy log. It carries one line per request and an error line
+naming the layer that failed: `dial tcp 172.21.0.4:3000: connect: connection
+refused` means the API is not answering, and you have the answer before you have
+opened anything else. It redacts the Cookie and Authorization headers to the
+literal `REDACTED`, checked against the running container rather than assumed,
+so it is safe to paste into a chat while you ask for help.
+
+Caddy writes nothing per request unless it is asked to, and the `log` directive
+in `infra/Caddyfile` is what asks. If that log is silent on a stack that is
+serving requests, you are looking at an older image than this commit.
 
 On the lab host, which is a different machine:
 

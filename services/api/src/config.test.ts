@@ -18,8 +18,11 @@ const complete = {
   AUTH_SECRET: 'a secret that is long enough',
   DOOR_TOKEN: 'a door token that is long enough',
   // An https origin means a real deployment, and one of those has to be able to
-  // send password reset mail. See the guard in config.ts and password-reset.test.ts.
-  SMTP_URL: 'smtp://mail:1025',
+  // send password reset mail. Deliberately not the development mail catcher:
+  // this fixture is what the suite believes a production environment looks
+  // like, and it used to be smtp://mail:1025, which is the thing the guard in
+  // config.ts now refuses. See password-reset.test.ts.
+  SMTP_URL: 'smtps://user:pw@smtp.example.org:465',
 }
 
 describe('reading the environment', () => {

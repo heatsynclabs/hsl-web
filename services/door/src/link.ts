@@ -105,10 +105,19 @@ async function readCardTable(call: ApiCall): Promise<CardTable> {
   }
 }
 
+/**
+ * How long to wait on the members API. Without it a public host that accepts
+ * the connection and stops answering holds the pass open for undici's default
+ * of 300 seconds, and the loop's running guard skips every tick until it
+ * returns. Ten seconds is far above an honest answer over the internet.
+ */
+export const API_TIMEOUT_MS = 10_000
+
 export function createApiLink(options: ApiLinkOptions): ApiLink {
   const call = async (path: string, init?: RequestInit): Promise<unknown> => {
     const send = options.fetchImpl ?? fetch
     const response = await send(`${options.apiUrl}${path}`, {
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
       ...init,
       headers: {
         authorization: `Bearer ${options.doorToken}`,

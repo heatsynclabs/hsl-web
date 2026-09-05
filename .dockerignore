@@ -6,3 +6,18 @@ node_modules
 secrets
 *.md
 docs
+
+# Member data must never reach a build context. The documented import puts a
+# pg_dump of the whole Rails members database at legacy/members.dump, and
+# `COPY . .` in the service Dockerfiles would bake it into an image layer.
+# See CONTRIBUTING.md rule 12.
+legacy
+backups
+*.dump
+*.sql.gz
+
+# Holds the deployment's own hostnames and ports, and is not read at build time.
+.env
+.env.*
+
+coverage

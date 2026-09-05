@@ -158,6 +158,7 @@ describe('the door service against a simulated controller, over HTTP', () => {
       databaseCards,
       controllerCards: await adapter.readCardTable(),
       ownedSlots,
+      databaseIssuedSlots: [...ownedSlots],
     })
     expect(first.writes).toEqual([])
     expect(first.clears).toEqual([])
@@ -170,6 +171,7 @@ describe('the door service against a simulated controller, over HTTP', () => {
       databaseCards,
       controllerCards: await adapter.readCardTable(),
       ownedSlots,
+      databaseIssuedSlots: [...ownedSlots],
     })
     expect(second.writes).toEqual([])
     expect(second.clears).toEqual([])

@@ -1,4 +1,4 @@
-import { CARD_SLOT_COUNT, LAST_USABLE_CARD_SLOT } from '@hsl/schema'
+import { CARD_SLOT_COUNT } from '@hsl/schema'
 
 /** The first EEPROM card slot. Slot n lives at byte 24 + n * 5 on the device. */
 export const FIRST_CARD_SLOT = 0
@@ -29,20 +29,4 @@ export function slotRefusal(slot: number): string | null {
 
 export function isUsableSlot(slot: number): boolean {
   return slotRefusal(slot) === null
-}
-
-/**
- * The lowest slot the reader will actually scan that nothing occupies. Refuses
- * rather than handing out slot 200, because a card written there does not open
- * the door and its five bytes land past the end of a 1024 byte EEPROM.
- */
-export function nextFreeSlot(occupiedSlots: Iterable<number>): number {
-  const taken = new Set(occupiedSlots)
-  for (let slot = FIRST_CARD_SLOT; slot <= LAST_USABLE_CARD_SLOT; slot += 1) {
-    if (!taken.has(slot)) return slot
-  }
-  throw new Error(
-    `All ${CARD_SLOT_COUNT} usable card slots are occupied, so no card was assigned. ` +
-      'Deactivate a card that is no longer in use and reconcile, which frees its slot.',
-  )
 }

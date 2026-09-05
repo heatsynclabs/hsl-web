@@ -16,8 +16,21 @@ trap cleanup EXIT
 docker run -d --name "$name" -e POSTGRES_PASSWORD=drill -e POSTGRES_USER=hsl \
   -e POSTGRES_DB=hsl "$image" >/dev/null
 
+# The official image starts a temporary server to run its init scripts, then
+# shuts it down and starts the real one. pg_isready answers yes during that
+# first phase, so a loop that trusts it wins the race on an idle laptop and
+# loses it on a loaded CI runner, failing with "the database system is shutting
+# down" on a backup path that is fine. Wait for the entrypoint to say it has
+# finished, then prove the real server answers a real query.
 i=0
-until docker exec "$name" pg_isready -U hsl >/dev/null 2>&1; do
+until docker logs "$name" 2>&1 | grep -q 'PostgreSQL init process complete'; do
+  i=$((i + 1))
+  [ "$i" -lt 60 ] || { echo "postgres did not finish initialising" >&2; exit 1; }
+  sleep 1
+done
+
+i=0
+until docker exec "$name" psql -U hsl -d hsl -At -c 'select 1' >/dev/null 2>&1; do
   i=$((i + 1))
   [ "$i" -lt 60 ] || { echo "postgres did not become ready" >&2; exit 1; }
   sleep 1

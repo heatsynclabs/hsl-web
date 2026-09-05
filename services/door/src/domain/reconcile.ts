@@ -32,6 +32,14 @@ export interface ReconcileInput {
    * direction: the first pass after a restart reports rather than clears.
    */
   ownedSlots: ReadonlySet<number>
+  /**
+   * Every slot the members database holds a card row for, as it answered this
+   * pass, active or not. This is the API's `ownedSlots`, not the accumulated
+   * set above, and the difference is the whole point: revoking every card
+   * empties `databaseCards` and leaves this alone, while a database that has
+   * been emptied or replaced answers nothing for either.
+   */
+  databaseIssuedSlots: readonly number[]
 }
 
 export interface ReconcilePlan {
@@ -40,6 +48,11 @@ export interface ReconcilePlan {
   /** Held by the controller, unknown to the database. Reported, never cleared. */
   unknownControllerCards: CardTableRow[]
   refusedCards: RefusedCard[]
+  /**
+   * Slots this pass would have cleared and did not, because the database
+   * claimed no cards at all. Reported so somebody can see it happened.
+   */
+  withheldClears: number[]
 }
 
 /**
@@ -50,6 +63,20 @@ export interface ReconcilePlan {
  *
  * Running this against a controller it has already reconciled produces an empty
  * plan, which is what makes the loop safe to run on a timer.
+ *
+ * A database holding no card rows at all clears nothing. Gate 2 of section 13
+ * of CONTRIBUTING.md is that physical cards keep opening the door, and the way
+ * to break it is not this service being down but this service being up and
+ * confidently wrong. An emptied members database is reachable by accident:
+ * `make reset` against the wrong stack, a restore that has not finished,
+ * DATABASE_URL pointed somewhere new, or the undo step of the import runbook.
+ * The API answers 200 with empty arrays in every one of those cases, and a
+ * service that has been running owns every slot, so the next pass would erase
+ * the card table off the controller and nobody's fob would open the building.
+ *
+ * Revoking cards is untouched, including revoking all of them: a revoked card
+ * leaves databaseCards and keeps its row, so databaseIssuedSlots still names
+ * it. Only a database with no card rows whatsoever is distrusted.
  */
 export function planReconcile(input: ReconcileInput): ReconcilePlan {
   const refusedCards: RefusedCard[] = []
@@ -70,11 +97,14 @@ export function planReconcile(input: ReconcileInput): ReconcilePlan {
     else unknownControllerCards.push(card)
   }
 
+  const distrusted = input.databaseIssuedSlots.length === 0 && clears.length > 0
+
   return {
     writes: bySlotAscending(writes),
-    clears: clears.sort((a, b) => a - b),
+    clears: distrusted ? [] : clears.sort((a, b) => a - b),
     unknownControllerCards: bySlotAscending(unknownControllerCards),
     refusedCards,
+    withheldClears: distrusted ? clears.sort((a, b) => a - b) : [],
   }
 }
 
@@ -91,6 +121,13 @@ export function reportableEvents(plan: ReconcilePlan, at: string): DoorEventRepo
   }
   for (const refused of plan.refusedCards) {
     events.push({ kind: 'card-slot-refused', at, detail: { ...refused.card, reason: refused.reason, source: refused.source } })
+  }
+  if (plan.withheldClears.length > 0) {
+    events.push({
+      kind: 'card-table-clear-withheld',
+      at,
+      detail: { slots: plan.withheldClears.length },
+    })
   }
   if (!planIsEmpty(plan)) {
     events.push({

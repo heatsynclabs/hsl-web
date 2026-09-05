@@ -1,7 +1,17 @@
 name: hsl
 
+# Docker's default json-file driver keeps every line forever. On a small host
+# that is the members database and the door status going offline because the
+# disk filled with logs, so every service gets the same bound.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '5'
+
 services:
   db:
+    logging: *logging
     image: postgres:18.6-alpine
     restart: unless-stopped
     shm_size: 256mb
@@ -27,6 +37,7 @@ services:
   # containers can never race to migrate and a failed migration stops the deploy
   # rather than leaving a service running against a half migrated database.
   migrate:
+    logging: *logging
     build:
       context: .
       dockerfile: services/api/Dockerfile
@@ -45,6 +56,7 @@ services:
     restart: 'no'
 
   api:
+    logging: *logging
     build:
       context: .
       dockerfile: services/api/Dockerfile
@@ -75,6 +87,7 @@ services:
       start_period: 20s
 
   web:
+    logging: *logging
     build:
       context: .
       dockerfile: apps/Dockerfile
@@ -95,8 +108,16 @@ services:
       - api
 
   # Catches every message the API sends, so password reset can be followed
-  # without a real mail server. Read them at http://localhost:8025.
+  # without a real mail server. Read the inbox at the HSL_MAIL_PORT in .env.
+  #
+  # Behind a profile so it cannot start on a public host. It used to start
+  # everywhere, and a deployment that kept the placeholder in secrets/smtp_url
+  # delivered every password reset into it. services/api/src/config.ts now
+  # refuses to start in that case; this is the second half of the same fix.
+  # .env.example turns the profile on for development.
   mail:
+    profiles: ['dev']
+    logging: *logging
     image: axllent/mailpit:v1.28
     restart: unless-stopped
     ports:

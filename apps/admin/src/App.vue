@@ -45,13 +45,22 @@ const links = computed(() => {
   return all.filter((link) => holds(who, link.needs))
 })
 
+/** Long enough for a slow connection, short enough that the button comes back. */
+const SIGN_OUT_TIMEOUT_MS = 10_000
+
 /**
  * better-auth serves this endpoint, not the typed client. The method and path
  * were read from its 1.7.2 sources: dist/api/routes/sign-out.mjs declares
  * "/sign-out" as a POST, and services/api/src/auth.ts mounts it at /api/auth.
  */
 async function signOut(): Promise<void> {
-  await fetch('/api/auth/sign-out', { method: 'POST', credentials: 'include' })
+  // Bounded, so a hung API leaves the admin looking at a button that came back
+  // rather than one that never does.
+  await fetch('/api/auth/sign-out', {
+    method: 'POST',
+    credentials: 'include',
+    signal: AbortSignal.timeout(SIGN_OUT_TIMEOUT_MS),
+  })
   clearSession()
   window.location.assign('/')
 }

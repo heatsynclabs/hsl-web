@@ -27,6 +27,21 @@ const DEFAULT_DOOR_STATUS_STALE_SECONDS = 120
 
 const SECRET_NAMES = ['AUTH_SECRET', 'DOOR_TOKEN', 'DATABASE_PASSWORD', 'SMTP_URL'] as const
 
+/**
+ * The host `make secrets` writes into secrets/smtp_url, which is the compose
+ * service name of the development mail catcher. It resolves nowhere else, so
+ * refusing it on a real deployment has no false positive.
+ */
+const MAIL_CATCHER_HOST = 'mail'
+
+/** The schemes nodemailer 9.1.1 understands, read from lib/shared/index.js. */
+const SMTP_SCHEMES = ['smtp:', 'smtps:']
+
+function isSmtpUrl(value: string): boolean {
+  const url = URL.parse(value)
+  return url !== null && SMTP_SCHEMES.includes(url.protocol) && url.hostname !== ''
+}
+
 const environmentSchema = z.object({
   DATABASE_URL: z.string().min(1),
   DATABASE_PASSWORD: z.string().min(1).optional(),
@@ -41,7 +56,16 @@ const environmentSchema = z.object({
     .min(1)
     .default(DEFAULT_DOOR_STATUS_STALE_SECONDS),
   SPACE_API_TEMPLATE_PATH: z.string().min(1).optional(),
-  SMTP_URL: z.string().min(1).optional(),
+  // Checked here rather than accepted as any non-empty string. nodemailer
+  // 9.1.1's parseConnectionUrl recognises smtp:, smtps: and direct: and
+  // silently ignores every other scheme, leaving a transport with no host that
+  // fails at the first send rather than at boot. The message never carries the
+  // value, because the value carries the relay password.
+  SMTP_URL: z
+    .string()
+    .min(1)
+    .refine(isSmtpUrl, 'must be an smtp:// or smtps:// URL with a host name')
+    .optional(),
   MAIL_FROM: z.string().default('HeatSync Labs <noreply@heatsynclabs.org>'),
 })
 
@@ -77,6 +101,11 @@ function resolveSecrets(environment: Environment): Environment {
   }
 
   return resolved
+}
+
+function pointsAtTheMailCatcher(smtpUrl: string | undefined): boolean {
+  if (smtpUrl === undefined) return false
+  return URL.parse(smtpUrl)?.hostname === MAIL_CATCHER_HOST
 }
 
 /**
@@ -116,6 +145,18 @@ export function loadConfig(environment: Environment = process.env): Config {
       'SMTP_URL is not set, so password reset mail cannot be sent and a member who forgets ' +
         'their password has no way back in. Set SMTP_URL, or SMTP_URL_FILE naming a file that ' +
         'holds it. The API did not start.',
+    )
+  }
+
+  // A deployment that kept the placeholder answers every reset request with
+  // success and posts the mail into a web inbox nobody reads, which is worse
+  // than refusing to start: the 31 imported members who have never had a
+  // password are locked out with nothing in any log to say so.
+  if (values.PUBLIC_ORIGIN.startsWith('https://') && pointsAtTheMailCatcher(values.SMTP_URL)) {
+    throw new Error(
+      'SMTP_URL still points at the development mail catcher, so every password reset would be ' +
+        'delivered to an inbox nobody reads and the members who need reset would be locked out. ' +
+        'Put a real SMTP URL in secrets/smtp_url. The API did not start.',
     )
   }
 

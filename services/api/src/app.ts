@@ -52,7 +52,7 @@ export function createApp(deps: AppDeps) {
   app.notFound(notFound)
 
   app.onError((error, c) => {
-    console.error('[api] unhandled error', error)
+    console.error(`[api] ${c.req.method} ${c.req.path} failed: ${logSafeError(error)}`)
     const body: ErrorResponse = {
       error:
         'The request failed and nothing was changed. Try again, and tell an admin if it keeps happening.',
@@ -64,6 +64,41 @@ export function createApp(deps: AppDeps) {
 }
 
 export type App = ReturnType<typeof createApp>
+
+/**
+ * What a failed request is allowed to write to the log.
+ *
+ * Logging the error object put every bind parameter there: drizzle carries them
+ * in the message and again in `params`, and pg puts the offending value in
+ * `detail`. On this system a bind parameter is a member's name, address and
+ * emergency contact, or a session token, or a password reset token, and
+ * `make logs` is how docs/operations.md tells a volunteer to look at the
+ * system. The statement is kept, because it is parameterised and says what was
+ * being attempted, and so are the Postgres error code, table and constraint,
+ * because those are what somebody needs to fix it.
+ */
+export function logSafeError(error: unknown): string {
+  if (!(error instanceof Error)) return 'a thrown value that was not an Error'
+
+  const statement = error.message.split('\nparams:')[0] ?? ''
+  const cause = postgresCause(error.cause)
+
+  return cause === null ? `${error.name}: ${statement}` : `${error.name}: ${statement} (${cause})`
+}
+
+/** The parts of a Postgres error that describe the failure rather than the row. */
+function postgresCause(cause: unknown): string | null {
+  if (typeof cause !== 'object' || cause === null) return null
+
+  const fields = cause as { code?: unknown; table?: unknown; constraint?: unknown }
+  const named = [
+    typeof fields.code === 'string' ? `code ${fields.code}` : null,
+    typeof fields.table === 'string' ? `table ${fields.table}` : null,
+    typeof fields.constraint === 'string' ? `constraint ${fields.constraint}` : null,
+  ].filter((part) => part !== null)
+
+  return named.length === 0 ? null : named.join(', ')
+}
 
 function notFound(c: Context<AppEnv>) {
   const body: ErrorResponse = { error: 'There is no route at that path.' }

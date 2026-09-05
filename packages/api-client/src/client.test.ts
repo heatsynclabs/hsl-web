@@ -39,7 +39,29 @@ describe('a call that works', () => {
       credentials: 'include',
       headers: undefined,
       body: undefined,
+      signal: expect.any(AbortSignal),
     })
+  })
+
+  /**
+   * An API that accepts the connection and stops answering used to leave every
+   * screen on a spinner that never resolved, with no way out but a reload. The
+   * signal is what turns that into a sentence a member can read.
+   */
+  it('gives up on an API that never answers, rather than spinning forever', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url: string, init?: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(init.signal?.reason))
+          }),
+      ),
+    )
+
+    const impatient = createClient({ baseUrl: 'https://members.example.org', timeoutMs: 25 })
+
+    await expect(impatient.me()).rejects.toMatchObject({ name: 'ApiError' })
   })
 
   it('sends a card as JSON to the route that assigns the slot', async () => {

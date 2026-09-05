@@ -84,9 +84,11 @@ legacy import, and anything touching money or access.
   query builder. A fake controller speaking the real wire protocol beats a mocked
   client object.
 
-Coverage is collected and published. It is never gated. A threshold turns
-coverage into the goal, and then somebody writes a test that executes a module
-and asserts nothing.
+Coverage is not collected. It was written down here as collected and published
+and never was, which is worse than either. If somebody wants it, add
+`@vitest/coverage-v8` and publish the report as a CI artifact, and do not gate
+on a threshold: a threshold turns coverage into the goal, and then somebody
+writes a test that executes a module and asserts nothing.
 
 ## 5. Separation of concerns
 
@@ -187,8 +189,10 @@ Documentation lives next to the thing it documents and ships in the same change.
 
 - Every package and service has a `README.md` answering four questions in order:
   what it is, how to run it, how to test it, what it depends on.
-- Every API route is described in the OpenAPI document, generated from the code
-  so it cannot drift.
+- Every API route is a row in the table in `docs/architecture.md`. Adding a route
+  adds a row. There is no OpenAPI document: `docs/decisions/0003` declines one
+  until something outside this repository needs it, and a rule that names an
+  artifact nobody builds is a rule people learn to skip.
 - Runbooks for anything a volunteer might do at 2am live in `docs/runbooks/`, as
   numbered steps with the expected output at each step.
 - A change that alters behaviour and does not touch documentation is incomplete.

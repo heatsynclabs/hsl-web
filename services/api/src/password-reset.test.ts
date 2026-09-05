@@ -128,7 +128,63 @@ it('refuses to start a public deployment that cannot send mail', () => {
   }
 
   expect(() => loadConfig(environment)).toThrow(/SMTP_URL is not set/)
-  expect(() => loadConfig({ ...environment, SMTP_URL: 'smtp://localhost:1025' })).not.toThrow()
+  expect(() => loadConfig({ ...environment, SMTP_URL: 'smtps://user:pw@smtp.example.org:465' })).not.toThrow()
+})
+
+/**
+ * `make secrets` writes smtp://mail:1025, the development mail catcher, into
+ * secrets/smtp_url. The guard above only asked whether SMTP_URL was set, and a
+ * placeholder is set, so a deployment where nobody replaced that one file
+ * started cleanly, answered every reset request with success, and posted the
+ * mail into a web inbox nobody reads. The 31 imported members for whom reset is
+ * the only way in were locked out with nothing in any log to say so.
+ *
+ * `mail` is the compose service name of the catcher and resolves nowhere else,
+ * so refusing it has no false positive. A real relay on localhost is left
+ * alone: some hosts do run one.
+ */
+it('refuses the development mail catcher on a public deployment', () => {
+  const environment = {
+    DATABASE_URL: 'postgres://hsl@db:5432/hsl',
+    PUBLIC_ORIGIN: 'https://members.heatsynclabs.org',
+    AUTH_SECRET: 'a test secret that is long enough',
+    DOOR_TOKEN: 'a test door token that is long enough',
+  }
+
+  expect(() => loadConfig({ ...environment, SMTP_URL: 'smtp://mail:1025' })).toThrow(
+    /secrets\/smtp_url/,
+  )
+})
+
+it('lets a laptop keep pointing at the mail catcher, because http is not a deployment', () => {
+  expect(() =>
+    loadConfig({
+      DATABASE_URL: 'postgres://hsl@db:5432/hsl',
+      PUBLIC_ORIGIN: 'http://localhost:9080',
+      AUTH_SECRET: 'a test secret that is long enough',
+      DOOR_TOKEN: 'a test door token that is long enough',
+      SMTP_URL: 'smtp://mail:1025',
+    }),
+  ).not.toThrow()
+})
+
+/**
+ * SMTP_URL was `z.string().min(1)`, so a value with no scheme reached
+ * nodemailer, which threw at boot from inside createTransport. Refusing it here
+ * names the variable and the file; the value is never printed, because it
+ * carries the relay password.
+ */
+it('refuses an SMTP_URL that is not a URL, without printing it', () => {
+  const environment = {
+    DATABASE_URL: 'postgres://hsl@db:5432/hsl',
+    PUBLIC_ORIGIN: 'https://members.heatsynclabs.org',
+    AUTH_SECRET: 'a test secret that is long enough',
+    DOOR_TOKEN: 'a test door token that is long enough',
+    SMTP_URL: 'smtp.example.org:465:hunter2',
+  }
+
+  expect(() => loadConfig(environment)).toThrow(/SMTP_URL/)
+  expect(() => loadConfig(environment)).not.toThrow(/hunter2/)
 })
 
 it('allows a laptop with no mail server, because http is not a deployment', () => {
