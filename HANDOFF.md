@@ -3,7 +3,7 @@
 Where this stands, what is proven, and what the next person has to decide. One
 page, kept current. If it disagrees with anything else, fix one of them.
 
-Last updated 2026-09-03.
+Last updated 2026-09-04.
 
 ## 1. State
 
@@ -12,20 +12,20 @@ runs on a laptop under Docker Compose, and `README.md` is the instructions.
 
 | Part | State | Proven by |
 |---|---|---|
-| `packages/schema` | built | 26 tests, 4 migrations applied to a real Postgres |
+| `packages/schema` | built | 26 tests, 5 migrations applied to a real Postgres |
 | `packages/ui` | built | 28 tests, rendered in a browser in both themes |
 | `packages/api-client` | built | 15 tests |
-| `services/api` | built | 228 tests against a real Postgres |
+| `services/api` | built | 232 tests against a real Postgres |
 | `services/door` | built, never spoken to hardware | 150 tests, 12 of them over a socket against a simulated board |
 | `apps/members` | built | 66 tests, walked through in a browser |
 | `apps/signup` | built | 33 tests, walked through in a browser |
-| `apps/admin` | built | 181 tests, walked through in a browser |
+| `apps/admin` | built | 185 tests, walked through and keyboard driven in a browser |
 | `tools/import` | built, run against the real dump | 37 tests, 12 needing `LEGACY_DATABASE_URL`, plus the run in section 2 |
 | Compose stack | runs | brought up from nothing, every URL answers |
 | Backup and restore | works | `tools/restore-drill.sh` passes, in CI |
 | Deployment | not started | no host exists yet, see section 5 |
 
-727 tests, which is what `pnpm check` runs. `tools/import` is not a workspace
+735 tests, which is what `pnpm check` runs. `tools/import` is not a workspace
 package and has its own 37 and its own CI job. Lint, typecheck and the voice
 check are clean.
 
@@ -492,6 +492,120 @@ One measurement worth keeping: running two test suites against one throwaway
 Postgres corrupts both, because the Vitest global setup drops the schema. That
 is how the first Node 24 run and one local run were made to fail.
 
+### Surfaces nobody had been over
+
+Four areas that no previous pass had touched, on 2026-09-04: the keyboard and
+screen reader path through the admin app, delete behaviour and the append-only
+guarantee at the database, the schema under a year of real volume, and sessions
+and cookies attacked rather than read. Four findings, three of them fixed in
+`4899d3a`.
+
+44. **The two-step confirmations lost the keyboard.** Vue swaps the pressed
+    button for the question, and a browser drops focus onto the page body when
+    the focused element leaves the document. Measured in Chrome against the
+    running stack rather than reasoned about: pressing "Turn card access on"
+    left focus nowhere, and the next Tab went to Sign out, seven stops before
+    "Yes, do it". A screen reader was told nothing had happened, because the
+    group that carries the question as its accessible name was never focused.
+
+    This is the control that hands somebody a building key, and the question is
+    the whole guard on it. The 185 tests in `apps/admin` could not have caught
+    it: `trigger('click')` never establishes focus, so every one of them was
+    driving a screen no keyboard could drive. Both confirmations move focus onto
+    the question now and back to the control when it closes, with four cases
+    that press with the keyboard and were watched failing.
+
+    Not fixed, and worth naming: every button that disables itself while its
+    request is in flight has the same defect for the same reason, because Chrome
+    blurs a focused element the moment it becomes disabled. That is the door
+    control panel, Sync now, Deactivate on the card table and the roles form, on
+    the member door screen as well as the admin one. jsdom does not blur on
+    disable, so no suite in this repository can see it either. The member door
+    screen also announces a refusal and not a success: `role="alert"` is on the
+    failure line and the list of what was sent has no live region, so a blind
+    member at the door hears nothing when it works.
+45. **`DELETE /api/members/:id` cannot remove what signup creates.** The route
+    exists to undo an account made by somebody who should not have one, per
+    finding 11. `POST /api/signup` writes a `waivers` row for every account it
+    creates, and the guard refuses any member who has one: "That member has a
+    signed release on their record." Reproduced end to end against a real
+    Postgres. It is the only path that creates an account from outside since
+    finding 21 closed `/api/auth/sign-up/email`, so the route can remove nothing
+    it was built for. The dues tier the signup form makes somebody pick refuses
+    it a second time.
+
+    The suite agrees with the defect. `addMember` in the harness calls
+    `auth.api.signUpEmail` directly, which writes no waiver and no tier, so the
+    suite's idea of "an account that was created and never used" is not what the
+    route in the next file produces.
+
+    Not fixed, because it is not a code question. Whether a release signed at
+    signup is a record the lab keeps is section 5 item 5, waiver retention, and
+    that needs the board rather than a patch.
+46. **Removing a member was not atomic, and the guard missed four foreign
+    keys.** The guard names the rows that belong to a member and misses the four
+    columns that name a member without being about them: `user.oriented_by_id`,
+    `user_certifications.granted_by_id`, `payments.recorded_by_id` and
+    `waivers.recorded_by_id`. Every one is a foreign key with no delete
+    behaviour. Nothing reaches this in a fresh system, because each of those is
+    written by a route that also writes an audit row and the guard reads that;
+    the import writes all four and writes no audit rows at all, so an imported
+    member can be named by one and look untouched.
+
+    The three deletes then ran one after another. The foreign key stopped the
+    last one with the credential and the sessions already gone: the member was
+    signed out everywhere, their password stopped working with nothing anywhere
+    to say why, `audit_log` carried a `member.remove` row for a removal that had
+    not happened, and the admin was told the request failed and nothing had
+    changed. Retrying does the same thing again. The member is recoverable,
+    which was checked rather than assumed: better-auth 1.7.2 recreates the
+    credential row on a password reset, so they are locked out rather than lost.
+
+    The guard names those four now and the audit row and the deletes are one
+    transaction, so a reference nobody has thought of costs nothing. The
+    transaction has its own case, planted through `door_events.actor_id`, which
+    is the one foreign key the guard deliberately does not name.
+47. **The append-only trigger named the wrong table.** The row trigger from
+    migration 0001 is shared with `door_events` since 0002, and it says
+    "audit_log is append only" whichever table refused. Removing a door status
+    row with a poisoned clock is the one reason anybody reaches for a delete
+    here, per finding 5, and it sent them to the wrong table. Migration 0004
+    reads `TG_TABLE_NAME`, which the truncate function beside it already did.
+    The test asserted only the phrase "append only", which is why the wrong name
+    passed for a day.
+
+Checked and clean this pass, with what was checked:
+
+- **The schema at real volume.** 1,061 members, 8,291 payments, 415 grants, 64
+  cards, 20,000 audit rows and 625,600 door events, which is a year of status
+  posts at one a minute plus card reads, loaded into a real Postgres 18.6.
+  `EXPLAIN (analyze, buffers)` on the directory, the certification join, the
+  first page of the audit log, the newest door status, the door event list and
+  the 24 hour enrolment window: every one under 10 ms, and the two that matter
+  most are index scans. The directory is a sequential scan over 1,061 rows and
+  does not need an index. `audit_log_at_idx` is never used, because the route
+  pages by id, and it is not worth removing.
+- **Walking around the append-only tables.** `UPDATE`, `DELETE` and `TRUNCATE`
+  are refused on both, and `TRUNCATE "user" CASCADE`, which reaches `audit_log`
+  through `actor_id`, is refused by the cascaded table's own statement trigger.
+  The limit of the guarantee, measured: the application's database role is a
+  superuser, because `POSTGRES_USER: hsl` in `compose.yaml` makes it one, so
+  anything holding that credential can disable the trigger in one statement.
+  Nothing in this repository does, and no route reaches SQL that could.
+- **Sessions and cookies, attacked.** `hsl.session_token` is `HttpOnly`,
+  `SameSite=Lax`, `Path=/`, no `Domain`, and `Secure` on an https origin.
+  Expiry is seven days, read off the row rather than the documentation. A
+  password reset deletes every session row and both cookies stop working, which
+  was driven over HTTP rather than through `auth.api`. Sign out deletes the row
+  and clears three cookies. An expired row is refused. Roles are read from the
+  member row on every request, so revoking card access takes effect at once.
+- **Whether the import's dry run leaves anything behind.** It does not.
+  `ALTER TABLE certifications ALTER COLUMN id RESTART WITH` is rolled back on
+  Postgres 18, which was tested rather than remembered.
+- **The legacy schema the import tests build.** Every column and every NOT NULL
+  in `tools/import/test-support/legacy-schema.ts` matches the real legacy
+  database, checked against `information_schema.columns` on a restored replica.
+
 ## 4. Facts that overrule the older documents
 
 `docs/legacy-system.md` has the full list with sources. The ones that changed
@@ -583,6 +697,14 @@ Beyond section 3. None of these is hidden in the code.
   sends only what changed, and a member over the limit can delete characters and
   save, which was checked in a browser against a planted 2,005 character value.
   The import preflight reports the rows so nobody meets one by surprise.
+- **An admin cannot undo a signup.** Finding 45. The route is there, the
+  refusal is deliberate, and the two do not meet. Whether a release signed at
+  signup is a record the lab keeps is a board question, not a code one.
+- **Every control that disables itself while saving drops the keyboard.**
+  Finding 44 fixed the two-step confirmations and not this, which is the door
+  control panel, Sync now, Deactivate and the roles form, on both door screens.
+  No suite here can see it, because jsdom does not blur a focused element on
+  disable and Chrome does.
 - **Section 12 says door logs are readable by the member they concern, and no
   route lets a member read theirs.** `GET /api/door/events` is admin only, which
   satisfies the "nobody else" half and not the first one, and there is now a
