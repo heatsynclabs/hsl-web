@@ -57,11 +57,26 @@ function splitDecimal(amount: string): Decimal {
   return { negative, whole, fraction }
 }
 
+/**
+ * payments.amount_cents is an integer column. The check below is on the
+ * magnitude before the sign goes back on, which is right in both directions:
+ * int4 reaches one further down than up.
+ *
+ * Refusing here names the legacy row. Letting it through stops the whole import
+ * at the insert with `value "..." is out of range for type integer`, which names
+ * no row out of the 8,291 the table holds.
+ */
+const CENTS_LIMIT = 2_147_483_647
+
 export function amountToCents(amount: string | null): number {
   if (amount === null) return 0
 
   const { negative, whole, fraction } = splitDecimal(amount)
   const cents = Number(whole) * 100 + Number(fraction.padEnd(2, '0').slice(0, 2))
+
+  if (cents > CENTS_LIMIT) {
+    throw new Error(`payment amount does not fit in the cents column: ${amount}`)
+  }
 
   return negative ? -cents : cents
 }

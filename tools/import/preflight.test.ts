@@ -131,6 +131,62 @@ describe('preflight', () => {
     expect(refusals(found, true)).toHaveLength(1)
   })
 
+  /**
+   * amount_cents is an integer column, and the legacy amount is an
+   * unconstrained numeric. A row past the column's range used to reach the
+   * insert and stop the whole import with `value "..." is out of range for type
+   * integer`, which names no row out of 8,291.
+   */
+  it('refuses a payment amount that will not fit in the cents column', () => {
+    const payments = [
+      {
+        id: 1,
+        userId: 1,
+        amount: '50000000000.00',
+        paidOn: '2026-01-01',
+        createdBy: null,
+        createdAt: AT,
+      },
+    ]
+
+    expect(checks(preflight(snapshot({ payments })))).toContain(
+      'payment amount that will not convert to cents',
+    )
+    expect(refusals(preflight(snapshot({ payments })), true)).toHaveLength(1)
+  })
+
+  it('says nothing about the largest amount that does fit', () => {
+    const payments = [
+      {
+        id: 1,
+        userId: 1,
+        amount: '21474836.47',
+        paidOn: '2026-01-01',
+        createdBy: null,
+        createdAt: AT,
+      },
+    ]
+
+    expect(preflight(snapshot({ payments }))).toEqual([])
+  })
+
+  /**
+   * Section 6 of HANDOFF.md asks whether the legacy database holds a duplicate
+   * pair. The import reads every grant on its way past, so it can answer
+   * instead of leaving somebody to go and look.
+   */
+  it('reports a member granted the same certification twice', () => {
+    const certifications = [{ id: 1, slug: 'laser', name: 'Laser Cutter', description: null }]
+    const userCertifications = [
+      { id: 1, userId: 1, certificationId: 1, createdBy: null, createdAt: AT },
+      { id: 2, userId: 1, certificationId: 1, createdBy: null, createdAt: AT },
+    ]
+    const found = preflight(snapshot({ certifications, userCertifications }))
+
+    expect(checks(found)).toContain('the same certification granted twice')
+    expect(refusals(found, false)).toEqual([])
+  })
+
   it('lets an orphan release through only when the operator accepts orphans', () => {
     const contracts = [
       {

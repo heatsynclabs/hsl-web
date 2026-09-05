@@ -1,5 +1,6 @@
 import type {
   LegacyCard,
+  LegacyCertification,
   LegacyContract,
   LegacyPayment,
   LegacySnapshot,
@@ -241,15 +242,8 @@ function checkCardSlots(cards: LegacyCard[]): Finding[] {
   ]
 }
 
-function checkCertifications(snapshot: LegacySnapshot, userIds: Set<number>): Finding[] {
-  const { certifications, userCertifications } = snapshot
-  const certificationIds = new Set(certifications.map((row) => row.id))
-  const orphan = (row: LegacyUserCertification) =>
-    row.userId === null ||
-    !userIds.has(row.userId) ||
-    row.certificationId === null ||
-    !certificationIds.has(row.certificationId)
-
+/** The tool list itself. */
+function checkCertificationList(certifications: LegacyCertification[]): Finding[] {
   return [
     ...report({
       severity: 'refusal',
@@ -263,12 +257,39 @@ function checkCertifications(snapshot: LegacySnapshot, userIds: Set<number>): Fi
       ids: duplicates(certifications.map((row) => ({ id: row.id, key: row.slug ?? '' }))),
       detail: 'Two tools would answer to the same name.',
     }),
+  ]
+}
+
+/** Who holds what, and who granted it. */
+function checkCertificationGrants(snapshot: LegacySnapshot, userIds: Set<number>): Finding[] {
+  const { certifications, userCertifications } = snapshot
+  const certificationIds = new Set(certifications.map((row) => row.id))
+  const orphan = (row: LegacyUserCertification) =>
+    row.userId === null ||
+    !userIds.has(row.userId) ||
+    row.certificationId === null ||
+    !certificationIds.has(row.certificationId)
+
+  return [
     ...report({
       severity: 'refusal',
       check: 'orphan certification grant',
       ids: userCertifications.filter(orphan).map((row) => row.id),
       detail: 'The member or the tool no longer exists. Accepting orphans skips these rows.',
       orphan: true,
+    }),
+    ...report({
+      severity: 'notice',
+      check: 'the same certification granted twice',
+      ids: duplicates(
+        userCertifications
+          .filter((row) => !orphan(row))
+          .map((row) => ({ id: row.id, key: `${row.userId}:${row.certificationId}` })),
+      ),
+      detail:
+        'Both rows are carried, because section 13 forbids a constraint that rejects existing ' +
+        'data, and the member sees the tool listed twice until somebody revokes it. This is the ' +
+        'question section 6 of HANDOFF.md asks, answered.',
     }),
     ...report({
       severity: 'notice',
@@ -281,7 +302,8 @@ function checkCertifications(snapshot: LegacySnapshot, userIds: Set<number>): Fi
   ]
 }
 
-function checkPayments(payments: LegacyPayment[], userIds: Set<number>): Finding[] {
+/** The money itself: whether each row converts to a whole number of cents. */
+function checkPaymentAmounts(payments: LegacyPayment[]): Finding[] {
   const unconvertible = (row: LegacyPayment) => {
     try {
       amountToCents(row.amount)
@@ -296,8 +318,22 @@ function checkPayments(payments: LegacyPayment[], userIds: Set<number>): Finding
       severity: 'refusal',
       check: 'payment amount that will not convert to cents',
       ids: payments.filter(unconvertible).map((row) => row.id),
-      detail: 'legacy payments.amount is an unconstrained numeric and this value is not money.',
+      detail:
+        'legacy payments.amount is an unconstrained numeric, so this row is either not money at ' +
+        'all or is more of it than the cents column can hold.',
     }),
+    ...report({
+      severity: 'notice',
+      check: 'payment with no amount',
+      ids: payments.filter((row) => row.amount === null).map((row) => row.id),
+      detail: 'Recorded as zero cents with a note saying the legacy row held no amount.',
+    }),
+  ]
+}
+
+/** Who the payment belongs to, who recorded it, and when it arrived. */
+function checkPaymentOwnership(payments: LegacyPayment[], userIds: Set<number>): Finding[] {
+  return [
     ...report({
       severity: 'refusal',
       check: 'orphan payment',
@@ -313,12 +349,6 @@ function checkPayments(payments: LegacyPayment[], userIds: Set<number>): Finding
       ids: payments.filter((row) => row.paidOn === null).map((row) => row.id),
       detail: 'Dues status is derived from the most recent payment date. Accepting orphans skips these.',
       orphan: true,
-    }),
-    ...report({
-      severity: 'notice',
-      check: 'payment with no amount',
-      ids: payments.filter((row) => row.amount === null).map((row) => row.id),
-      detail: 'Recorded as zero cents with a note saying the legacy row held no amount.',
     }),
     ...report({
       severity: 'notice',
@@ -368,8 +398,10 @@ export function preflight(snapshot: LegacySnapshot): Finding[] {
     ...checkProfileText(snapshot.users),
     ...checkCardNumbers(snapshot.cards, userIds),
     ...checkCardSlots(snapshot.cards),
-    ...checkCertifications(snapshot, userIds),
-    ...checkPayments(snapshot.payments, userIds),
+    ...checkCertificationList(snapshot.certifications),
+    ...checkCertificationGrants(snapshot, userIds),
+    ...checkPaymentAmounts(snapshot.payments),
+    ...checkPaymentOwnership(snapshot.payments, userIds),
     ...checkContracts(snapshot.contracts, userIds),
   ]
 }

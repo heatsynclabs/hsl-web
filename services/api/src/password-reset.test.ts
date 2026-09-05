@@ -37,21 +37,17 @@ describeDatabase('password reset', () => {
     await db.execute(`truncate table "user", account restart identity cascade`)
     await db.execute(`set session_replication_role = default`)
 
+    // What the import writes for the 31: a member row and no credential at all.
+    // tools/import/load.ts skips the account row when the legacy hash is blank,
+    // which is why the import reconciles 1,030 credentials against 1,061
+    // members. This fixture used to add a credential holding the empty string,
+    // a shape the import cannot produce, so the reset these members depend on
+    // was only ever proved against something else.
     await db.insert(user).values({
       id: 'never-signed-in',
       name: 'A Member Who Never Set A Password',
       email,
       updatedAt: new Date(),
-    })
-    // What the import writes for the 31: a member row, and a credential whose
-    // hash is the empty string the legacy database held.
-    await db.insert(account).values({
-      id: 'never-signed-in-credential',
-      userId: 'never-signed-in',
-      providerId: 'credential',
-      issuer: 'local:credential',
-      accountId: 'never-signed-in',
-      password: '',
     })
   })
 
@@ -80,6 +76,19 @@ describeDatabase('password reset', () => {
       body: { email, password: 'a password they chose' },
     })
     expect(signedIn.user.email).toBe(email)
+  })
+
+  it('creates the credential the member never had, rather than needing one to exist', async () => {
+    const before = await db.select().from(account).where(eq(account.userId, 'never-signed-in'))
+    expect(before, 'the fixture stopped matching what the import writes').toEqual([])
+
+    await auth.api.requestPasswordReset({ body: { email, redirectTo: '/' } })
+    const link = sent[0]?.text.match(/\S*\/reset-password\/\S+/)?.[0] ?? ''
+    const token = new URL(link).pathname.split('/').pop() ?? ''
+    await auth.api.resetPassword({ body: { newPassword: 'a password they chose', token } })
+
+    const after = await db.select().from(account).where(eq(account.userId, 'never-signed-in'))
+    expect(after).toHaveLength(1)
   })
 
   it('stores the new password as bcrypt, so the hash format never splits', async () => {

@@ -15,18 +15,18 @@ runs on a laptop under Docker Compose, and `README.md` is the instructions.
 | `packages/schema` | built | 26 tests, 5 migrations applied to a real Postgres |
 | `packages/ui` | built | 28 tests, rendered in a browser in both themes |
 | `packages/api-client` | built | 15 tests |
-| `services/api` | built | 232 tests against a real Postgres |
+| `services/api` | built | 233 tests against a real Postgres |
 | `services/door` | built, never spoken to hardware | 150 tests, 12 of them over a socket against a simulated board |
 | `apps/members` | built | 66 tests, walked through in a browser |
 | `apps/signup` | built | 33 tests, walked through in a browser |
 | `apps/admin` | built | 185 tests, walked through and keyboard driven in a browser |
-| `tools/import` | built, run against the real dump | 37 tests, 12 needing `LEGACY_DATABASE_URL`, plus the run in section 2 |
+| `tools/import` | built, run against the real dump | 40 tests, 12 needing `LEGACY_DATABASE_URL`, plus the run in section 2 |
 | Compose stack | runs | brought up from nothing, every URL answers |
 | Backup and restore | works | `tools/restore-drill.sh` passes, in CI |
 | Deployment | not started | no host exists yet, see section 5 |
 
-735 tests, which is what `pnpm check` runs. `tools/import` is not a workspace
-package and has its own 37 and its own CI job. Lint, typecheck and the voice
+736 tests, which is what `pnpm check` runs. `tools/import` is not a workspace
+package and has its own 40 and its own CI job. Lint, typecheck and the voice
 check are clean.
 
 14,939 lines of TypeScript, Vue and build scripts, and 9,965 lines of tests,
@@ -574,6 +574,66 @@ and cookies attacked rather than read. Four findings, three of them fixed in
     The test asserted only the phrase "append only", which is why the wrong name
     passed for a day.
 
+48. **The keyboard defect is the whole front end, not one screen.** Finding 44
+    was the first site found. Driving all three apps in Chrome found five, and
+    they are one job rather than five:
+
+    - the two admin two-step confirmations, fixed in `4899d3a`;
+    - every control that disables itself while its request is in flight, because
+      Chrome blurs a focused element the moment it becomes disabled and jsdom
+      does not, so no suite here can see it;
+    - each route change in the signup wizard: Continue on step 1 replaces the
+      whole document and leaves focus on the body, so the next Tab starts at the
+      theme toggle;
+    - Continue on an empty signup form, which renders three field errors,
+      announces none of them and leaves focus on the button, so somebody using a
+      screen reader is given no reason to think the button did anything. The
+      fields themselves are wired correctly with `aria-invalid` and
+      `aria-describedby`, which is why the errors are readable once found;
+    - Edit profile and Save changes in the members app, which swap the card for
+      the form and back, losing focus both ways and announcing neither.
+
+    There is one `role="status"` in the whole front end, in
+    `ForgotPasswordView.vue`, and the `role="alert"` error lines. Nothing else
+    is a live region, so the only thing any of the three apps ever announces is
+    a failure. A member who cannot see the screen is told when something breaks
+    and never when it works.
+
+    Not fixed beyond the two confirmations. The remedy is one shared piece of
+    focus and announcement handling rather than five patches, the disable half
+    needs a decision about `disabled` versus `aria-disabled` on the shared
+    Button, and both are more than an audit pass should land in a hurry.
+49. **One legacy payment could stop the whole import with an error naming no
+    row.** `payments.amount_cents` is an integer and the legacy `amount` is an
+    unconstrained numeric, so anything over $21,474,836.47 reached the insert
+    and failed with `value "5000000000000" is out of range for type integer`.
+    Reproduced by planting one such row and running the real import: the
+    transaction rolls back, which is right, and the operator is left with 8,291
+    rows and nothing saying which one. The preflight already refuses an amount
+    that is not money and is the one place that lists rows by legacy id, so the
+    range check belongs there. `amountToCents` refuses on the magnitude before
+    the sign goes back on, which is correct in both directions, and the boundary
+    was checked at 21474836.47 and 21474836.48 each way.
+50. **`password-reset.test.ts` proved reset against a shape the import cannot
+    write.** Its fixture gave the member a credential row holding the empty
+    string, with a comment saying that is what the import writes for the 31
+    members who have never had a password. `tools/import/load.ts` skips the
+    account row entirely when the legacy hash is blank, which is why the import
+    reconciles 1,030 credentials against 1,061 members, and `import.test.ts` has
+    a case saying so. The two files disagreed and the API suite was the wrong
+    one.
+
+    Nothing was hiding behind it: better-auth 1.7.2 creates the credential row
+    on reset when there is none, which was checked rather than assumed. The
+    fixture is the real shape now and a case asserts the credential is absent
+    before the reset and present after, watched failing against the old fixture.
+51. **The import's preflight can answer section 6 item 5 and did not.** Whether
+    `user_certifications` holds a duplicate pair is an open question somebody was
+    going to have to go and look for. The preflight reads every grant on its way
+    past. It reports them as a notice now, with legacy ids, and says why both
+    rows are carried: section 13 forbids a constraint that rejects existing data,
+    and the member sees the tool listed twice until somebody revokes it.
+
 Checked and clean this pass, with what was checked:
 
 - **The schema at real volume.** 1,061 members, 8,291 payments, 415 grants, 64
@@ -602,6 +662,24 @@ Checked and clean this pass, with what was checked:
 - **Whether the import's dry run leaves anything behind.** It does not.
   `ALTER TABLE certifications ALTER COLUMN id RESTART WITH` is rolled back on
   Postgres 18, which was tested rather than remembered.
+- **The import run twice, and after a failure.** The second run is refused by
+  name: "The target database already holds 5 rows in user." A run that fails
+  part way rolls the whole transaction back and leaves the target empty and
+  re-runnable, which was driven with a planted bad row rather than reasoned
+  about.
+- **Email case, end to end.** better-auth 1.7.2 lowercases on sign-up (line 166
+  of `dist/api/routes/sign-up.mjs`) and on sign-in (line 318 of `sign-in.mjs`),
+  and `findUserByEmail` lowercases again inside the adapter, which is what makes
+  password reset case insensitive even though the route does not lowercase
+  itself. Signing in and requesting a reset with `DANA@Example.TEST` both work
+  against the running stack.
+- **The signup flow walked end to end in Chrome.** Five steps, the guard that
+  refuses a second join in a signed-in browser, the router refusing a skipped
+  step, field types and `autocomplete` values, the waiver copy, and the account
+  that comes out the other side. Everything works. It is also the strongest
+  reproduction of finding 45: a member who joined through the real form could
+  not be removed by an admin through the real API, refused first on the dues
+  tier and then on the release.
 - **The legacy schema the import tests build.** Every column and every NOT NULL
   in `tools/import/test-support/legacy-schema.ts` matches the real legacy
   database, checked against `information_schema.columns` on a restored replica.
@@ -665,7 +743,9 @@ access and each one changes code.
    characters on their own, `1234`, not the C literal. The door service refuses
    to start on anything else.
 5. **Whether `user_certifications` holds a duplicate pair.** No unique constraint
-   was added because section 13 forbids one that rejects existing data.
+   was added because section 13 forbids one that rejects existing data. The
+   import's preflight reports them by legacy id now, so this is answered by
+   running the dry run rather than by going to look.
 
 ## 7. Known gaps in what is built
 
@@ -700,11 +780,9 @@ Beyond section 3. None of these is hidden in the code.
 - **An admin cannot undo a signup.** Finding 45. The route is there, the
   refusal is deliberate, and the two do not meet. Whether a release signed at
   signup is a record the lab keeps is a board question, not a code one.
-- **Every control that disables itself while saving drops the keyboard.**
-  Finding 44 fixed the two-step confirmations and not this, which is the door
-  control panel, Sync now, Deactivate and the roles form, on both door screens.
-  No suite here can see it, because jsdom does not blur a focused element on
-  disable and Chrome does.
+- **The keyboard and screen reader path through all three apps.** Finding 48 is
+  the map: five sites, one job, and only the two confirmations are fixed.
+  Nothing in the front end announces a success to a screen reader.
 - **Section 12 says door logs are readable by the member they concern, and no
   route lets a member read theirs.** `GET /api/door/events` is admin only, which
   satisfies the "nobody else" half and not the first one, and there is now a
