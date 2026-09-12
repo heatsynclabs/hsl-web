@@ -21,8 +21,21 @@ const ACTIONS: Record<string, string> = {
  * underneath. Unlocking the rear door and leaving it unlocked is a lab decision
  * from 2018-02-22 (HYH). Opening it pulses the strike for five seconds with
  * somebody standing there, which that decision does not cover.
+ *
+ * `unlock:all` is on the list because it is the same thing asked less
+ * precisely: an unlock with no door named reaches the controller as "unlock
+ * everything", and everything includes the rear door.
  */
-const REFUSED = new Set(['unlock:rear'])
+const REFUSED = new Set(['unlock:rear', 'unlock:all'])
+
+/**
+ * Opening has to name a door. Leaving it out means "all", which is the safe
+ * direction for locking and a guess for opening. Unlocking is not here on
+ * purpose: an unlock with no door is a request to unlock everything, which is
+ * the thing the 2018 decision refuses, so it goes through the refusal below and
+ * leaves an audit row rather than reading as a malformed request.
+ */
+const NEEDS_A_DOOR = new Set(['open'])
 
 interface StateRow {
   controllerId: string
@@ -73,6 +86,9 @@ export const command: Handler<Env> = async (c) => {
   }
   if (door !== null && !config.doors.includes(door)) {
     return bad(c, `This building has doors called ${config.doors.join(' and ')}.`)
+  }
+  if (door === null && NEEDS_A_DOOR.has(action)) {
+    return bad(c, `Say which door to ${action}: ${config.doors.join(' or ')}.`)
   }
 
   const controller = await controllerFor(text(form.controllerId, 64))
@@ -172,7 +188,11 @@ async function controllerFor(named: string | null): Promise<StateRow | string> {
 
 function refusalFor(controller: StateRow, action: string, door: string | null): string | null {
   if (REFUSED.has(`${action}:${door ?? 'all'}`)) {
-    return `Unlocking the ${door} door and leaving it unlocked is refused here, by a lab decision from 2018-02-22.`
+    const what = door === null ? 'every door at once' : `the ${door} door`
+    return (
+      `Unlocking ${what} and leaving it unlocked is refused here, by a lab decision from ` +
+      '2018-02-22. Name the front door instead.'
+    )
   }
 
   const needed = ACTIONS[action] as string

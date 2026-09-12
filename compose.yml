@@ -43,7 +43,9 @@ services:
       PEPPER: ${PEPPER:-}
       DOOR_STALE_SECONDS: 180
       DOORS: ${DOORS:-front,rear}
-    ports: ["${API_PORT:-3000}:3000"]
+    # Bound to the loopback, because Caddy is what the world reaches and a port
+    # published on every interface is a way past the TLS and the headers.
+    ports: ["127.0.0.1:${API_PORT:-3000}:3000"]
     deploy:
       resources:
         limits: { memory: 512m, pids: 200 }
@@ -51,6 +53,8 @@ services:
       driver: json-file
       options: { max-size: 10m, max-file: "3" }
 
+  # Not started on a laptop: `docker compose --profile public up -d` is the
+  # public host, and `make up` is everything else.
   caddy:
     image: caddy:2
     restart: unless-stopped

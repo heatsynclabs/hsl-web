@@ -3,12 +3,12 @@
 What exists, what is not done, what nobody has confirmed, and who has to decide.
 Adding to this file is not an admission. It is the point.
 
-Last updated 2026-09-11.
+Last updated 2026-09-11, after the audit in section 6.
 
 ## 1. State
 
-Two processes. 23 source files, about 3,700 lines including the two scripts, and
-1,300 lines of tests. Thirteen tables, thirty nine routes, eight runtime
+Two processes. 26 source files, about 3,900 lines including the two scripts, and
+1,600 lines of tests. Thirteen tables, forty routes, eight runtime
 dependencies.
 
 ### What has been run
@@ -18,9 +18,9 @@ in containers, not inferred from the diff.
 
 - `make typecheck`: clean for both services.
 - `make voice`: clean.
-- The API suite, 42 tests, against a real Postgres with the schema built from
+- The API suite, 59 tests, against a real Postgres with the schema built from
   nothing by `scripts/migrate.ts`.
-- The door suite, 27 tests, including the whole codec over a real socket.
+- The door suite, 30 tests, including the whole codec over a real socket.
 - The API image built and served `/healthz`, `/.well-known/jwks.json` and
   `/space_api.json`.
 - The whole loop end to end: an admin minted a service token, the door service
@@ -29,6 +29,11 @@ in containers, not inferred from the diff.
   A queued `open` ran within one tick and came back `done`. A rear unlock was
   refused and the refusal is in the audit log. An unissued card held to the
   simulated reader arrived as a `presented` event with its card id.
+- The legacy import, against the fixture in `scripts/legacy-fixture.sql`: slots
+  preserved, a Devise hash signed in and was replaced with Argon2id in place,
+  the card at slot 200 moved to one the reader can see, and every column the
+  audit recovered arrived, including a waiver date for the member who signed
+  without a contract row.
 
 ### What has not been run
 
@@ -40,11 +45,13 @@ Sections 3 and 5 are about those.
 `hsl-web-api-spec.md` revision 3 is what this implements. Six places differ, and
 each one is a deliberate choice rather than an oversight.
 
-**Thirty nine routes, not thirty.** The specification's own tables in section 4
-list thirty six rows, and its summary says thirty. All thirty six are built.
-Three more were added: `GET`, `POST` and `DELETE /api/service-tokens`, because
-section 6.2 requires `service_token.create` and `service_token.revoke` audit
-actions and no route in the specification could write them.
+**Forty routes, not thirty.** The specification's own tables in section 4 list
+thirty six rows, and its summary says thirty. All thirty six are built. Four
+more were added: `GET`, `POST` and `DELETE /api/service-tokens`, because section
+6.2 requires `service_token.create` and `service_token.revoke` audit actions and
+no route in the specification could write them; and `GET /api/audit`, because
+the argument for letting one admin act immediately is that the audit log makes
+it visible afterwards, and a log with no way to read it does not.
 
 **Six guards, not four.** Section 4.1 names a `session` guard for logout and the
 token exchange, and section 2.7's table lists four without it. It is real and it
@@ -69,6 +76,14 @@ array per door and saves a fourteenth table.
 **The card list version is computed, not stored.** Section 5.5 says an admin
 change bumps the version. A digest of the list cannot be forgotten by a route
 written next year. `docs/decisions/0009` has the reasoning.
+
+**Six columns the specification's schema does not have.** `oriented_on`
+replacing `oriented`, plus `postal_code`, `emergency_email`, `email_visible` and
+`phone_visible` on `members`, and `cosigner` on `waivers`. Every one holds data
+the legacy database holds and the specification's tables have nowhere to put.
+The visibility flags are the ones that forced it: without them the directory
+overrides a preference a thousand members already expressed.
+`docs/decisions/0013` is the reasoning. Still thirteen tables.
 
 Two smaller ones: the database password is an environment variable rather than a
 compose secret, because a compose secret outside swarm is a bind-mounted file on
@@ -151,10 +166,23 @@ These block deployment, not development. None is technical.
   with any history, and signup writes a waiver, so it refuses every account
   signup creates. Untying that starts with the board question about waiver
   retention.
-- **Signup is unauthenticated and rate limited only by Caddy's body size.** Login
-  and forgot are rate limited; signup is not. It costs an email address per
-  account and a person has to be given a card before it means anything, but a
-  thousand junk rows would still be a bad afternoon.
+- **`members:read` and `status:read` are scopes no route consumes.** They exist
+  because section 2.5 names them for a kiosk and for locking down public status.
+  Minting a token with either does nothing today.
+- **Three legacy columns are still not carried.** `users.payment_method` and
+  `users.payee` describe how a member pays, and this system has no workflow for
+  either, so `payments.method` records what actually happened instead.
+  `users.oriented_by_id` is who oriented somebody, which `oriented_on` does not
+  keep. All three are readable in the archive for a year. If any of them matters
+  they are one migration and four lines of the import.
+- **The session cookie is scoped to the apex domain on purpose**, which means
+  any HeatSync subdomain can act as the member who is signed in. That is the
+  price of one login across every app with no protocol, and it is worth saying
+  out loud before the next subdomain goes up.
+- **A command claimed and not resolved is claimed again on the next tick.** The
+  door service resolves everything it claims, and a pass cannot overlap the one
+  before it, so this shows up only if the service dies mid-command. Then the
+  command runs twice, or expires after two minutes, depending on timing.
 - **The mass clear guard is a fixed number, five.** It covers a card list that
   came back short. A lab with more than five cards revoked in one sitting will
   meet it, and the fault event says exactly what was withheld and why.
@@ -174,7 +202,59 @@ These block deployment, not development. None is technical.
   two status strings match the legacy derivation. Comparing against the running
   system on a test hostname is still to do, and it is the step before DNS moves.
 
-## 6. Open licence questions
+## 6. The audit, and what it changed
+
+An adversarial read of the whole branch on 2026-09-11, after it was first
+written. Eleven defects, each proved with a failing test before it was fixed.
+The tests are still there.
+
+**The rear door refusal could be stepped over.** `POST /api/door/command` with
+`{"action":"unlock"}` and no door named reached the controller as "unlock
+everything", which includes the rear door, and the refusal only matched on the
+door name. It is now an audited 409 that says so.
+
+**One bad card id froze the card table for everybody.** The API stores a card id
+as text with no format rule, on purpose. The adapter turned one that is not hex
+into a thrown exception out of `uploadCards`, which took the whole pass with it
+on every tick, forever. It is now a fault against that one card.
+
+**Card reads were lost whenever the API was unreachable.** The controller's log
+is a ring that has to be read and then emptied, so events were already off the
+board by the time the post failed. They are held in memory now and go up on the
+next tick that works. Enrolment is the thing that depends on them.
+
+**There was no way to read the audit log.** The whole argument for one admin
+acting immediately is that the log makes it visible afterwards. `GET /api/audit`
+existed in the previous attempt and was not carried across.
+
+**Revoking something that was not there wrote an audit row anyway.** Three
+routes did it. The log now records what happened rather than what was asked.
+
+**Deleting a member who had ever acted answered 503.** The refusal only looked
+at rows about that member, not rows naming them, so a former admin met a foreign
+key instead of a sentence. It answers 409 and says to suspend instead.
+
+**The directory showed every address to every oriented member.** The legacy
+system carried `email_visible` and `phone_visible` and members set them. The
+specification's table has neither, so the rewrite would have overridden a
+preference a thousand people had already expressed. See `docs/decisions/0013`.
+
+**The directory stopped at 500 members.** The lab has 1,061. It silently hid the
+rest.
+
+**Six columns of member data had nowhere to land**, including the waiver date
+for the roughly 700 members who signed without a contract row, who would have
+imported looking as though they had never signed anything.
+
+**Changing an email to one somebody else holds answered 503.** Now 409.
+
+**The API published port 3000 on every interface**, which is a way past Caddy's
+TLS and headers on the public host. It is bound to the loopback now, and Caddy
+sits behind a `public` profile so a laptop does not start it.
+
+Seven routes had no test beyond the anonymous refusal. They have one now.
+
+## 7. Open licence questions
 
 - **`Open_Access_Control_Ethernet` has no licence file at all.** The lab owns the
   repository and should put one on it. Until then, this project reads it as
@@ -186,7 +266,7 @@ These block deployment, not development. None is technical.
 Both are HeatSync's own work, so this is a piece of housekeeping rather than a
 risk, and it is five minutes for somebody with commit access.
 
-## 7. If you are picking this up
+## 8. If you are picking this up
 
 Read in this order: `README.md`, then `api/src/index.ts`, which is the route
 table and nothing else, then `migrations/001_init.sql`. That is the whole system

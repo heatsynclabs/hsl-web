@@ -23,9 +23,12 @@ async function reported(
   }
 }
 
+// File scope, because a second describe below runs after this one finishes and
+// an after() inside a describe closes the pool too early for it.
+after(stop)
+
 describe('the door', () => {
   beforeEach(reset)
-  after(stop)
 
   test('the card list is active cards of active members who have door access', async () => {
     const bearer = await makeServiceToken()
@@ -279,5 +282,60 @@ describe('the door', () => {
       await call(app, '/api/me/door-events', { cookie: await signIn(app, holder.email) })
     ).json()) as { items: unknown[] }
     assert.equal(mine.items.length, 1)
+  })
+})
+
+describe('defects found in audit', () => {
+  beforeEach(reset)
+
+  test('unlocking with no door named does not unlock the rear one anyway', async () => {
+    const opener = await makeMember({ doorAccess: true })
+    const cookie = await signIn(app, opener.email)
+    await reported()
+
+    // The 2018 refusal is on `unlock:rear`. Leaving the door out asks the
+    // controller to unlock everything, which includes the rear one, so a
+    // refusal that only reads the door name is a refusal anybody can step over.
+    const answer = await call(app, '/api/door/command', {
+      method: 'POST',
+      cookie,
+      body: { action: 'unlock' },
+    })
+
+    assert.equal(answer.status, 409, 'an unlock with no door named went through')
+    assert.match(((await answer.json()) as { error: string }).error, /every door at once/)
+    assert.equal((await sql`select id from door_commands`).length, 0)
+
+    // And somebody can see it was asked for.
+    const [entry] = await sql<Array<{ action: string }>>`
+      select action from audit_log order by id desc limit 1`
+    assert.equal(entry?.action, 'door.command.refused')
+  })
+
+  test('opening with no door named is refused rather than guessing one', async () => {
+    const opener = await makeMember({ doorAccess: true })
+    const cookie = await signIn(app, opener.email)
+    await reported()
+
+    const answer = await call(app, '/api/door/command', {
+      method: 'POST',
+      cookie,
+      body: { action: 'open' },
+    })
+    assert.equal(answer.status, 400)
+    assert.match(((await answer.json()) as { error: string }).error, /which door/i)
+  })
+
+  test('locking everything needs no door, because locking is the safe direction', async () => {
+    const opener = await makeMember({ doorAccess: true })
+    const cookie = await signIn(app, opener.email)
+    await reported()
+
+    const answer = await call(app, '/api/door/command', {
+      method: 'POST',
+      cookie,
+      body: { action: 'lock' },
+    })
+    assert.equal(answer.status, 202)
   })
 })

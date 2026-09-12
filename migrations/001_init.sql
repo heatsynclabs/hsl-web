@@ -14,15 +14,25 @@ create table members (
   password       text,                             -- null means no credential yet
   roles          text[] not null default '{}',     -- admin | instructor | accountant
   status         text not null default 'active',   -- active | lapsed | suspended
-  oriented       boolean not null default false,
+  -- The date rather than a flag. Around seven hundred legacy rows carry when
+  -- orientation happened, and a boolean throws that away. Guards read it as
+  -- "is this null".
+  oriented_on    date,
   hidden         boolean not null default false,
   door_access    boolean not null default false,
   member_level   integer,                          -- carries both dollars and label, as legacy did
   phone          text,
+  postal_code    text,
   emergency_name text,
   emergency_phone text,
+  emergency_email text,
   current_skills text,
   desired_skills text,
+  -- Real preferences, not a new idea: the legacy users table carried both and
+  -- members set them. The directory shows an address or a number only where
+  -- its member turned the field on.
+  email_visible  boolean not null default false,
+  phone_visible  boolean not null default false,
   joined_on      date not null default current_date,
   reset_token    text,
   reset_expires  timestamptz,
@@ -102,6 +112,7 @@ create table waivers (
   member_id  uuid not null references members(id) on delete restrict,
   signed_at  timestamptz not null,
   document   text,                                 -- pointer, not a copy
+  cosigner   text,                                 -- for a member who signed under 18
   legacy_id  integer
 );
 

@@ -68,11 +68,15 @@ export const revoke: Handler<Env> = async (c) => {
   const actor = c.get('member')
   const id = param(c, 'id')
 
-  const revoked = (await change(
-    { actor: actor.id, action: 'credential.revoke', target: id },
-    (tx) => tx`update credentials set active = false where id = ${id} and active returning token`,
-  )) as Array<{ token: string }>
-  if (revoked.length === 0) return missing(c, 'An active card with that id')
+  // Looked up first, so a revoke of a card that is already revoked leaves no
+  // audit row. The log is the record of what happened, and an entry for
+  // something that did not happen is worse than no entry at all.
+  const [held] = await sql`select id from credentials where id = ${id} and active`
+  if (held === undefined) return missing(c, 'An active card with that id')
+
+  await change({ actor: actor.id, action: 'credential.revoke', target: id }, (tx) =>
+    tx`update credentials set active = false where id = ${id}`,
+  )
 
   log({ evt: 'credential_revoked', credential: id, by: actor.id })
   return c.body(null, 204)

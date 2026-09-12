@@ -15,8 +15,12 @@ runaway process should not take the host down and the door status with it.
 git pull
 docker compose pull
 docker compose run --rm api node scripts/migrate.ts
-docker compose up -d
+docker compose --profile public up -d
 ```
+
+`--profile public` is what starts Caddy. Without it you get the database and the
+API with the API bound to the loopback, which is the right thing on a laptop and
+not a deployment.
 
 Migrations run before the new API starts, and they are forward only, so each one
 has to leave the previous version of the code working: add a column one release

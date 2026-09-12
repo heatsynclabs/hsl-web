@@ -18,15 +18,19 @@ export interface Member {
   password: string | null
   roles: string[]
   status: string
-  oriented: boolean
+  orientedOn: Date | null
   hidden: boolean
   doorAccess: boolean
   memberLevel: number | null
   phone: string | null
+  postalCode: string | null
   emergencyName: string | null
   emergencyPhone: string | null
+  emergencyEmail: string | null
   currentSkills: string | null
   desiredSkills: string | null
+  emailVisible: boolean
+  phoneVisible: boolean
   joinedOn: Date
   createdAt: Date
   updatedAt: Date
@@ -227,11 +231,11 @@ export function role(name: 'admin' | 'instructor' | 'accountant'): MiddlewareHan
   }
 }
 
-/** As above, and oriented is true. Orientation is what opens the directory. */
+/** As above, and orientation has happened. Orientation is what opens the directory. */
 export const oriented: MiddlewareHandler<Env> = async (c, next) => {
   const found = await asMember(c)
   if (found instanceof Response) return found
-  if (!found.oriented) {
+  if (found.orientedOn === null) {
     return refuse(c, 403, 'The member directory opens after new member orientation.')
   }
   return next()

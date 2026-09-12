@@ -8,12 +8,18 @@ exactly. Rule 7 in `CONTRIBUTING.md` forbids abbreviations that are not here.
 **Member** A person with an account. Every signed-in user is a member. The
 member row is the user row; there is no separate profile table.
 
+**Visible** Whether a member has asked for their email address or their phone
+number to appear in the directory. Two booleans that came across from the legacy
+database, where members set them. Off is the default and off is what most rows
+carry.
+
 **Member level** The dues tier a member pays. Carries both a role meaning and a
 dollar meaning in the legacy database, which is why it is imported as it stands
 rather than split.
 
-**Oriented** A member who has completed new member orientation. Orientation is
-what opens the member directory.
+**Oriented** A member who has completed new member orientation, recorded as the
+date it happened in `oriented_on`. Orientation is what opens the member
+directory.
 
 **Admin** A member who can change other members, cards and certifications. Every
 privileged action an admin takes is written to the audit log in the same

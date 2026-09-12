@@ -83,28 +83,33 @@ create table contracts (
 -- The password on every row below is `correct-horse-battery`, hashed with
 -- bcrypt at cost 10 with the $2a$ prefix, which is what Devise wrote.
 insert into users
-  (id, name, email, encrypted_password, phone, member_level, orientation, hidden,
+  (id, name, email, encrypted_password, phone, postal_code, emergency_email,
+   member_level, orientation, waiver, hidden, email_visible, phone_visible,
    current_skills, admin, instructor, accountant, created_at, updated_at)
 values
   (1, 'Ada Example', 'ada@example.invalid',
    '$2a$10$eNPiWo2SJ/agF7AvCWbTZ.E1JUH6V6OFwQXi3DY9NRMfPR7iFo0pO',
-   '480-555-0100', 50, '2019-03-04 18:00:00', false, 'laser cutting',
-   true, false, false, '2015-06-01 12:00:00', '2026-01-02 12:00:00'),
+   '480-555-0100', '85281', 'next-of-kin@example.invalid',
+   50, '2019-03-04 18:00:00', '2015-06-01 12:00:00', false, true, true,
+   'laser cutting', true, false, false, '2015-06-01 12:00:00', '2026-01-02 12:00:00'),
+  -- Signed, and has no contract row. Most of the membership looks like this:
+  -- 318 contracts against 1,061 users.
   (2, 'Brunel Example', 'brunel@example.invalid',
    '$2a$10$eNPiWo2SJ/agF7AvCWbTZ.E1JUH6V6OFwQXi3DY9NRMfPR7iFo0pO',
-   null, 25, '2021-11-12 19:30:00', false, null,
-   false, true, false, '2021-11-01 12:00:00', '2026-01-02 12:00:00'),
+   null, null, null, 25, '2021-11-12 19:30:00', '2021-11-01 12:00:00', false, false, false,
+   null, false, true, false, '2021-11-01 12:00:00', '2026-01-02 12:00:00'),
   -- One of the 31 accounts with no password. They could not sign in before
   -- either, and they use password reset.
-  (3, 'Curie Example', 'curie@example.invalid', '', null, null, null, true, null,
-   false, false, true, '2013-02-02 12:00:00', '2013-02-02 12:00:00');
+  (3, 'Curie Example', 'curie@example.invalid', '', null, null, null,
+   null, null, null, true, false, false,
+   null, false, false, true, '2013-02-02 12:00:00', '2013-02-02 12:00:00');
 
 -- Slot 14 is the lowest in production. Slot 200 is the one the firmware writes
 -- and never reads, so that member's card has silently never worked.
-insert into cards (id, card_number, card_permissions, user_id, name) values
-  (14, '4b1c7', 1, 1, 'blue fob'),
-  (37, '104b1c8', 1, 2, 'white card'),
-  (200, 'a9f21', 1, 3, 'the one that never worked');
+insert into cards (id, card_number, card_permissions, user_id, name, created_at) values
+  (14, '4b1c7', 1, 1, 'blue fob', '2015-06-02 12:00:00'),
+  (37, '104b1c8', 1, 2, 'white card', '2021-11-02 12:00:00'),
+  (200, 'a9f21', 1, 3, 'the one that never worked', '2013-02-03 12:00:00');
 
 insert into certifications (id, slug, name) values
   (1, 'laser', 'Laser Cutter'),
@@ -123,6 +128,5 @@ insert into payments (user_id, amount, "date", created_by, created_at) values
   -- A payment belonging to nobody. Reported as a warning and left behind.
   (9999, 25.00, '2026-02-08', 3, '2026-02-08 12:00:00');
 
-insert into contracts (user_id, signed_at, document_file_name, created_at) values
-  (1, '2015-06-01 12:00:00', 'waiver-1.pdf', '2015-06-01 12:00:00'),
-  (2, '2021-11-01 12:00:00', 'waiver-2.pdf', '2021-11-01 12:00:00');
+insert into contracts (user_id, signed_at, document_file_name, cosigner, created_at) values
+  (1, '2015-06-01 12:00:00', 'waiver-1.pdf', null, '2015-06-01 12:00:00');

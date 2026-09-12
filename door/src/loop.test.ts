@@ -7,7 +7,14 @@ import type { Command, Link } from './link.ts'
 import { memo, tick } from './loop.ts'
 
 /** A link that records what the loop asked it for, in order. */
-function stubLink(overrides: Partial<Link> & { cards?: Card[]; version?: string; commands?: Command[] }) {
+function stubLink(
+  overrides: Partial<Link> & {
+    cards?: Card[]
+    version?: string
+    commands?: Command[]
+    refuseEvents?: boolean
+  },
+) {
   const calls: string[] = []
   const results: Array<{ id: string; outcome: string }> = []
   let version = overrides.version ?? 'v1'
@@ -21,6 +28,7 @@ function stubLink(overrides: Partial<Link> & { cards?: Card[]; version?: string;
       return { commands: waiting, cardsVersion: version }
     },
     postEvents: async (events: DoorEvent[]) => {
+      if (overrides.refuseEvents === true) throw new Error('the API is not answering')
       if (events.length > 0) calls.push(`postEvents:${events.length}`)
     },
     fetchCards: async () => {
@@ -120,5 +128,27 @@ describe('the loop', () => {
     const events = stub.calls.indexOf('postEvents:1')
     const cards = stub.calls.indexOf('fetchCards')
     assert.ok(events !== -1 && events < cards, 'enrolling a card waits behind the card list')
+  })
+})
+
+describe('defects found in audit', () => {
+  test('a card read survives the API being down', async () => {
+    const { device, door } = adapter()
+    device.present('0000FFFF')
+
+    // The controller's log is a ring that has to be read and then emptied, so
+    // by the time the API refuses the events they are already gone from the
+    // board. Losing them means an admin never sees the card somebody held to
+    // the reader, and enrolment is the one thing that depends on these arriving.
+    const down = stubLink({ refuseEvents: true })
+    const mem = memo()
+    await assert.rejects(() => tick(down.link, door, mem))
+
+    const up = stubLink({})
+    await tick(up.link, door, mem)
+    assert.ok(
+      up.calls.includes('postEvents:1'),
+      'the read the API refused was dropped rather than held',
+    )
   })
 })

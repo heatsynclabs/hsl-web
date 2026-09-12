@@ -16,17 +16,18 @@ insert into certifications (slug, name) values
   ('plasmacutter', 'Plasma Cutter')
 on conflict (slug) do nothing;
 
-insert into members (email, name, password, roles, oriented, door_access, member_level)
+insert into members (email, name, password, roles, oriented_on, door_access, member_level,
+                     email_visible)
 values
   ('ada@example.invalid', 'Ada Example',
    '$argon2id$v=19$m=19456,t=2,p=1$ejHofG2Lp5MASVPBnGoR/w$FikxKx0YsAprzYuohHAi8B+KHGlLnwwI7QCducG//F8',
-   '{admin}', true, true, 50),
+   '{admin}', '2019-03-04', true, 50, true),
   ('brunel@example.invalid', 'Brunel Example',
    '$argon2id$v=19$m=19456,t=2,p=1$ejHofG2Lp5MASVPBnGoR/w$FikxKx0YsAprzYuohHAi8B+KHGlLnwwI7QCducG//F8',
-   '{instructor}', true, true, 25),
+   '{instructor}', '2021-11-12', true, 25, false),
   ('curie@example.invalid', 'Curie Example',
    '$argon2id$v=19$m=19456,t=2,p=1$ejHofG2Lp5MASVPBnGoR/w$FikxKx0YsAprzYuohHAi8B+KHGlLnwwI7QCducG//F8',
-   '{}', false, false, 25)
+   '{}', null, false, 25, false)
 on conflict do nothing;
 
 insert into credentials (token, member_id, label)

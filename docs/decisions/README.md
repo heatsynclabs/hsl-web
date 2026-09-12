@@ -21,3 +21,4 @@ architectural choice. `0000-template.md` is the shape.
 | 0010 | What the import carries and what it leaves behind |
 | 0011 | The node test runner instead of a test framework |
 | 0012 | No front end in this repository |
+| 0013 | Carry the columns the specification dropped |

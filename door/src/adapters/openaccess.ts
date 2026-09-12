@@ -307,6 +307,10 @@ export interface Plan {
   faults: DoorEvent[]
   /** Slots the plan would have cleared and did not. */
   withheld: number[]
+  /** Credential ids this device cannot hold at all. Reported, never retried. */
+  rejected: string[]
+  /** Every tag the device should be holding once this plan has run. */
+  holding: string[]
 }
 
 /**
@@ -319,10 +323,26 @@ export interface Plan {
  */
 export function planUpload(cards: readonly Card[], held: readonly Placement[]): Plan {
   const faults: DoorEvent[] = []
+  const rejected: string[] = []
   const taken = new Set(held.map((row) => row.slot))
   const wanted = new Map<number, { card: Card; placement: Placement }>()
 
   for (const card of cards) {
+    // The API stores a card id as text with no format rule, because rule Two
+    // says the hardware format belongs here. So this is where a card id that
+    // this device cannot hold is met, and it is met one card at a time: an
+    // exception out of this loop would stop the pass, and then one unusable
+    // card id in the members database would freeze the card table for
+    // everybody, forever.
+    let tag: string
+    try {
+      tag = padTag(card.token)
+    } catch (error) {
+      faults.push(fault(String(error instanceof Error ? error.message : error), { cardId: card.id }))
+      rejected.push(card.id)
+      continue
+    }
+
     const placement = isPlacement(card.placement) ? card.placement : null
     const refusal = placement === null ? null : slotRefusal(placement.slot)
     if (placement !== null && refusal !== null) {
@@ -338,10 +358,7 @@ export function planUpload(cards: readonly Card[], held: readonly Placement[]): 
       continue
     }
 
-    wanted.set(slot, {
-      card,
-      placement: { slot, mask: maskFor(card), tag: padTag(card.token) },
-    })
+    wanted.set(slot, { card, placement: { slot, mask: maskFor(card), tag } })
     taken.add(slot)
   }
 
@@ -375,6 +392,8 @@ export function planUpload(cards: readonly Card[], held: readonly Placement[]): 
     clears: withhold ? [] : clears.sort((a, b) => a - b),
     faults,
     withheld: withhold ? clears.sort((a, b) => a - b) : [],
+    rejected,
+    holding: [...wanted.values()].map((entry) => entry.placement.tag),
   }
 }
 
@@ -463,7 +482,7 @@ export function createOpenAccess(options: OpenAccessOptions): DoorAdapter {
 
       const plan = planUpload(cards, held)
       const placements: UploadResult['placements'] = []
-      const removed: string[] = []
+      const removed: string[] = [...plan.rejected]
       const faults = [...plan.faults, ...pending]
       pending = []
 
@@ -489,8 +508,10 @@ export function createOpenAccess(options: OpenAccessOptions): DoorAdapter {
         }
       }
 
+      // What the reader should now recognise. A refused read of anything else
+      // is a card being offered for enrolment rather than a card being denied.
       known.clear()
-      for (const card of cards) known.add(padTag(card.token))
+      for (const tag of plan.holding) known.add(tag)
 
       return { placements, removed, faults }
     },

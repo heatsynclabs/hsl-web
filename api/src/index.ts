@@ -4,6 +4,7 @@ import { Hono } from 'hono'
 import { doorAccess, member, oriented, role, service, session, type Env } from './auth.ts'
 import { config } from './config.ts'
 import { log } from './log.ts'
+import * as audit from './routes/audit.ts'
 import * as certifications from './routes/certifications.ts'
 import * as credentials from './routes/credentials.ts'
 import * as door from './routes/door.ts'
@@ -57,6 +58,9 @@ app.post('/api/payments', role('accountant'), payments.record)
 app.get('/api/door', member, door.state)
 app.post('/api/door/command', doorAccess, door.command)
 app.get('/api/door/events', role('admin'), door.events)
+
+// The record
+app.get('/api/audit', role('admin'), audit.list)
 
 // Service tokens
 app.get('/api/service-tokens', role('admin'), doorService.listTokens)

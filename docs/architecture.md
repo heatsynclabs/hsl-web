@@ -110,8 +110,10 @@ absence of all of them.
 | `accountant` | record payments |
 | (none) | own profile, own cards, own certifications, own payments, own door events |
 
-Two booleans that are attributes rather than roles: `oriented` gates reading the
-member directory, `hidden` keeps a member out of it.
+Two attributes rather than roles: `oriented_on` gates reading the member
+directory, and `hidden` keeps a member out of it. Orientation is stored as the
+date it happened rather than as a flag, because the legacy database records when
+and a boolean throws that away.
 
 `door_access` is a third boolean and is the whole of the door policy. Sitting
 next to it is a card list contract that is per-door, so a future controller can
@@ -128,7 +130,7 @@ than stacked.
 | `session` | A session cookie, and `status = 'active'` |
 | `member` | Valid session or JWT, and `status = 'active'` |
 | `role('admin')` | As above, and `roles` contains it. `admin` carries the other two |
-| `oriented` | As above, and `oriented` is true |
+| `oriented` | As above, and `oriented_on` is set |
 | `doorAccess` | As above, and `door_access` is true |
 | `service('door')` | Valid service token holding that scope |
 
@@ -153,6 +155,12 @@ is not obvious from it:
 **`members`** carries `legacy_id` so a row can be traced back to the Rails
 database for a year after cutover, and `reset_token` rather than a reset table,
 because one live token per member is the correct behaviour anyway.
+
+It also carries five columns the specification's table does not: `oriented_on`,
+`postal_code`, `emergency_email`, `email_visible` and `phone_visible`. All five
+hold data the legacy `users` table holds, and the last two are the reason the
+directory is allowed to show an address at all. `docs/decisions/0013` has the
+reasoning.
 
 **`credentials.token`** is the card id. It has no length constraint, no case
 rule and no hardware format. Legacy tokens are five to seven hex characters, and
@@ -218,6 +226,14 @@ await change(
 A privileged write with no audit row is not something a reviewer has to catch.
 There is no way to express it, and a write that fails rolls the audit row back
 with it.
+
+`GET /api/audit` reads it back, admin only, newest first. A log nobody can read
+does not make anything visible, and visibility is the whole argument for letting
+one admin act immediately.
+
+A write that changes nothing writes nothing. Revoking a card that is already
+revoked answers 404 and leaves no row, because an entry for something that did
+not happen is worse than no entry at all.
 
 The complete list of actions. If an action is not here, no route writes it.
 

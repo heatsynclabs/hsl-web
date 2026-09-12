@@ -260,11 +260,12 @@ export const revokeToken: Handler<Env> = async (c) => {
   const actor = c.get('member')
   const id = param(c, 'id')
 
-  const revoked = (await change(
-    { actor: actor.id, action: 'service_token.revoke', target: id },
-    (tx) => tx`update service_tokens set revoked = true where id = ${id} and not revoked returning id`,
-  )) as Array<{ id: string }>
-  if (revoked.length === 0) return missing(c, 'A live service token with that id')
+  const [live] = await sql`select id from service_tokens where id = ${id} and not revoked`
+  if (live === undefined) return missing(c, 'A live service token with that id')
+
+  await change({ actor: actor.id, action: 'service_token.revoke', target: id }, (tx) =>
+    tx`update service_tokens set revoked = true where id = ${id}`,
+  )
 
   return c.body(null, 204)
 }

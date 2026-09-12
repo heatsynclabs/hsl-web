@@ -48,17 +48,23 @@ interface LegacyUser {
   email: string
   encryptedPassword: string | null
   phone: string | null
+  postalCode: string | null
   emergencyName: string | null
   emergencyPhone: string | null
+  emergencyEmail: string | null
   currentSkills: string | null
   desiredSkills: string | null
   memberLevel: number | null
   orientation: string | null
+  waiver: string | null
   hidden: boolean | null
+  emailVisible: boolean | null
+  phoneVisible: boolean | null
   admin: boolean | null
   instructor: boolean | null
   accountant: boolean | null
   createdAt: string
+  updatedAt: string
 }
 
 interface LegacyCard {
@@ -67,6 +73,7 @@ interface LegacyCard {
   permissions: number | null
   userId: number | null
   label: string | null
+  createdAt: string | null
 }
 
 interface LegacyCert {
@@ -97,6 +104,7 @@ interface LegacyContract {
   userId: number | null
   signedAt: string | null
   documentFileName: string | null
+  cosigner: string | null
 }
 
 /**
@@ -115,16 +123,23 @@ await legacy`set session characteristics as transaction read only`
 
 const users = await legacy<LegacyUser[]>`
   select id, name, email, encrypted_password as "encryptedPassword", phone,
+         postal_code as "postalCode",
          emergency_name as "emergencyName", emergency_phone as "emergencyPhone",
+         emergency_email as "emergencyEmail",
          current_skills as "currentSkills", desired_skills as "desiredSkills",
-         member_level as "memberLevel", hidden, admin, instructor, accountant,
+         member_level as "memberLevel", hidden,
+         email_visible as "emailVisible", phone_visible as "phoneVisible",
+         admin, instructor, accountant,
          to_char(orientation, ${legacy.unsafe(UTC)}) as "orientation",
-         to_char(created_at, ${legacy.unsafe(UTC)}) as "createdAt"
+         to_char(waiver, ${legacy.unsafe(UTC)}) as "waiver",
+         to_char(created_at, ${legacy.unsafe(UTC)}) as "createdAt",
+         to_char(updated_at, ${legacy.unsafe(UTC)}) as "updatedAt"
   from users order by id`
 
 const cards = await legacy<LegacyCard[]>`
   select id, card_number as "cardNumber", card_permissions as "permissions",
-         user_id as "userId", name as "label"
+         user_id as "userId", name as "label",
+         to_char(created_at, ${legacy.unsafe(UTC)}) as "createdAt"
   from cards order by id`
 
 const certifications = await legacy<LegacyCert[]>`
@@ -142,7 +157,7 @@ const payments = await legacy<LegacyPayment[]>`
   from payments order by id`
 
 const contracts = await legacy<LegacyContract[]>`
-  select id, user_id as "userId", document_file_name as "documentFileName",
+  select id, user_id as "userId", document_file_name as "documentFileName", cosigner,
          to_char(signed_at, ${legacy.unsafe(UTC)}) as "signedAt"
   from contracts order by id`
 
@@ -275,16 +290,20 @@ await target.begin(async (tx) => {
   for (const user of users) {
     const password = (user.encryptedPassword ?? '').trim()
     await tx`
-      insert into members (id, email, name, password, roles, oriented, hidden, door_access,
-                           member_level, phone, emergency_name, emergency_phone,
-                           current_skills, desired_skills, joined_on, legacy_id, created_at)
+      insert into members (id, email, name, password, roles, oriented_on, hidden, door_access,
+                           member_level, phone, postal_code, emergency_name, emergency_phone,
+                           emergency_email, current_skills, desired_skills,
+                           email_visible, phone_visible,
+                           joined_on, legacy_id, created_at, updated_at)
       values (${memberId.get(user.id) as string}, ${user.email.trim().toLowerCase()},
               ${(user.name ?? user.email).trim()}, ${password === '' ? null : password},
-              ${rolesOf(user)}, ${user.orientation !== null}, ${user.hidden === true},
-              ${doorAccess.has(user.id)}, ${user.memberLevel}, ${user.phone},
-              ${user.emergencyName}, ${user.emergencyPhone}, ${user.currentSkills},
-              ${user.desiredSkills}, ${user.createdAt.slice(0, 10)}, ${user.id},
-              ${user.createdAt})`
+              ${rolesOf(user)}, ${user.orientation?.slice(0, 10) ?? null}, ${user.hidden === true},
+              ${doorAccess.has(user.id)}, ${user.memberLevel}, ${user.phone}, ${user.postalCode},
+              ${user.emergencyName}, ${user.emergencyPhone}, ${user.emergencyEmail},
+              ${user.currentSkills}, ${user.desiredSkills},
+              ${user.emailVisible === true}, ${user.phoneVisible === true},
+              ${user.createdAt.slice(0, 10)}, ${user.id},
+              ${user.createdAt}, ${user.updatedAt})`
   }
 
   for (const cert of certifications) {
@@ -308,8 +327,9 @@ await target.begin(async (tx) => {
   for (const card of cards) {
     const token = cardId(card.cardNumber)
     const [credential] = await tx<Array<{ id: string }>>`
-      insert into credentials (token, member_id, label, legacy_slot)
-      values (${token}, ${memberId.get(card.userId as number) as string}, ${card.label}, ${card.id})
+      insert into credentials (token, member_id, label, issued_on, legacy_slot)
+      values (${token}, ${memberId.get(card.userId as number) as string}, ${card.label},
+              ${card.createdAt?.slice(0, 10) ?? new Date().toISOString().slice(0, 10)}, ${card.id})
       returning id`
 
     await tx`
@@ -342,13 +362,29 @@ await target.begin(async (tx) => {
               ${payment.id})`
   }
 
+  const hasWaiver = new Set<string>()
   for (const contract of contracts) {
     const member = contract.userId === null ? undefined : memberId.get(contract.userId)
     if (member === undefined) continue
+    hasWaiver.add(member)
     await tx`
-      insert into waivers (member_id, signed_at, document, legacy_id)
+      insert into waivers (member_id, signed_at, document, cosigner, legacy_id)
       values (${member}, ${contract.signedAt ?? new Date().toISOString()},
-              ${contract.documentFileName}, ${contract.id})`
+              ${contract.documentFileName}, ${contract.cosigner}, ${contract.id})`
+  }
+
+  /**
+   * `users.waiver` is a second place the legacy system recorded that somebody
+   * signed. There are 318 contracts and 1,061 users, so most members who signed
+   * have a date here and no document row, and carrying only the contracts would
+   * leave them looking as though they had never signed anything.
+   */
+  for (const user of users) {
+    const member = memberId.get(user.id) as string
+    if (user.waiver === null || hasWaiver.has(member)) continue
+    await tx`
+      insert into waivers (member_id, signed_at, document)
+      values (${member}, ${user.waiver}, null)`
   }
 })
 

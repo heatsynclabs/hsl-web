@@ -3,7 +3,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import type { Handler } from 'hono'
 
 import { change } from '../audit.ts'
-import { byEmail, hashPassword, type Env, type Member } from '../auth.ts'
+import { byEmail, hashPassword, overRateLimit, type Env, type Member } from '../auth.ts'
 import { sql } from '../db.ts'
 import { TEXT_LIMIT, bad, body, missing, param, text } from '../http.ts'
 import { log } from '../log.ts'
@@ -11,16 +11,21 @@ import { sendResetLink } from '../mail.ts'
 
 const ROLES = ['admin', 'instructor', 'accountant']
 const STATUSES = ['active', 'lapsed', 'suspended']
+const BOOLEANS = new Set(['hidden', 'doorAccess', 'emailVisible', 'phoneVisible'])
 
 /** What a member may change about themselves. Everything else is ignored. */
 const OWN_FIELDS = [
   'name',
   'phone',
+  'postalCode',
   'emergencyName',
   'emergencyPhone',
+  'emergencyEmail',
   'currentSkills',
   'desiredSkills',
   'hidden',
+  'emailVisible',
+  'phoneVisible',
 ] as const
 
 /**
@@ -28,16 +33,32 @@ const OWN_FIELDS = [
  * accountant, member_level, waiver, orientation and hidden on themselves
  * through attr_accessible. That is not reproduced.
  */
-const ADMIN_FIELDS = [...OWN_FIELDS, 'email', 'roles', 'status', 'memberLevel', 'oriented', 'doorAccess'] as const
+const ADMIN_FIELDS = [
+  ...OWN_FIELDS,
+  'email',
+  'roles',
+  'status',
+  'memberLevel',
+  'oriented',
+  'doorAccess',
+] as const
 
 // Views ----------------------------------------------------------------------
 
-/** The directory. No phone, no emergency contact, no level, no status. */
+/**
+ * The directory. No emergency contact, no level, no status.
+ *
+ * An address or a number appears only where that member turned the field on.
+ * Those two flags came across from the legacy users table because members set
+ * them there, so they are a preference somebody already expressed rather than a
+ * default this system gets to choose.
+ */
 function directoryView(m: Member): object {
   return {
     id: m.id,
     name: m.name,
-    email: m.email,
+    email: m.emailVisible ? m.email : null,
+    phone: m.phoneVisible ? m.phone : null,
     currentSkills: m.currentSkills,
     desiredSkills: m.desiredSkills,
     joinedOn: m.joinedOn,
@@ -52,15 +73,20 @@ export function fullView(m: Member): object {
     email: m.email,
     roles: m.roles,
     status: m.status,
-    oriented: m.oriented,
+    oriented: m.orientedOn !== null,
+    orientedOn: m.orientedOn,
     hidden: m.hidden,
     doorAccess: m.doorAccess,
     memberLevel: m.memberLevel,
     phone: m.phone,
+    postalCode: m.postalCode,
     emergencyName: m.emergencyName,
     emergencyPhone: m.emergencyPhone,
+    emergencyEmail: m.emergencyEmail,
     currentSkills: m.currentSkills,
     desiredSkills: m.desiredSkills,
+    emailVisible: m.emailVisible,
+    phoneVisible: m.phoneVisible,
     joinedOn: m.joinedOn,
     createdAt: m.createdAt,
     updatedAt: m.updatedAt,
@@ -101,6 +127,12 @@ export const signup: Handler<Env> = async (c) => {
   const form = await body(c)
   const name = text(form.name, 200)
   const email = text(form.email, 320)
+
+  // Open to the internet and it writes two rows, so it is counted the same way
+  // sign in is. Ten an hour per address is a joining rate no lab reaches.
+  if (overRateLimit(c, email)) {
+    return c.json({ error: 'Too many attempts. Try again in a quarter of an hour.' }, 429)
+  }
   const password = typeof form.password === 'string' ? form.password : ''
   const level = readLevel(form.memberLevel)
 
@@ -132,13 +164,18 @@ export const signup: Handler<Env> = async (c) => {
   return c.json({ id, name, email }, 201)
 }
 
+/**
+ * Everybody who is not hidden, in one answer and not a page of one. The lab has
+ * about a thousand members, `?q=` narrows it, and a cap below the size of the
+ * membership hides people from each other without saying so.
+ */
 export const directory: Handler<Env> = async (c) => {
   const q = text(c.req.query('q'), 100)
   const rows = await sql<Member[]>`
     select * from members
     where not hidden and status = 'active'
       ${q === null ? sql`` : sql`and (name ilike ${`%${q}%`} or email ilike ${`%${q}%`})`}
-    order by name limit 500`
+    order by name`
   return c.json(rows.map(directoryView))
 }
 
@@ -188,6 +225,15 @@ export const update: Handler<Env> = async (c) => {
   if (patch instanceof Error) return bad(c, patch.message)
   if (Object.keys(patch).length === 0) return bad(c, 'Nothing in that body is a field this route sets.')
 
+  // Checked here rather than left to the unique index, which would surface as
+  // a 503 with nothing an admin could act on.
+  if (typeof patch.email === 'string') {
+    const held = await byEmail(patch.email)
+    if (held !== null && held.id !== id) {
+      return c.json({ error: 'There is already an account on that email.' }, 409)
+    }
+  }
+
   const updated = (await change(
     { actor: actor.id, action: 'member.update', target: id, detail: { fields: Object.keys(patch) } },
     (tx) => tx`update members set ${sql(patch)}, updated_at = now() where id = ${id} returning *`,
@@ -207,12 +253,20 @@ export const remove: Handler<Env> = async (c) => {
   const id = param(c, 'id')
   if ((await byId(id)) === null) return missing(c, 'That member')
 
+  // Every table that points at a member, not only the ones that point at them
+  // as the subject. A former admin is named by audit_log.actor_id, and the log
+  // outlives everybody in it, so deleting them is refused here rather than by a
+  // foreign key answering 503 to somebody who was owed a sentence.
   const [history] = await sql<Array<{ kind: string }>>`
     select 'a payment' as kind from payments where member_id = ${id}
     union all select 'a card' from credentials where member_id = ${id}
     union all select 'a waiver' from waivers where member_id = ${id}
     union all select 'a certification' from member_certifications where member_id = ${id}
     union all select 'a door event' from door_events where member_id = ${id}
+    union all select 'an entry in the audit log' from audit_log where actor_id = ${id}
+    union all select 'a door command' from door_commands where requested_by = ${id}
+    union all select 'a certification they granted' from member_certifications where granted_by = ${id}
+    union all select 'a payment they recorded' from payments where recorded_by = ${id}
     limit 1`
 
   if (history !== undefined) {
@@ -293,7 +347,12 @@ function readPatch(
       const level = readLevel(value)
       if (level instanceof Error) return level
       patch.memberLevel = level
-    } else if (field === 'hidden' || field === 'oriented' || field === 'doorAccess') {
+    } else if (field === 'oriented') {
+      // Stored as the date it happened, so setting the flag records today and
+      // clearing it forgets the date, which is what clearing it means.
+      if (typeof value !== 'boolean') return new Error('oriented is true or false.')
+      patch.orientedOn = value ? new Date().toISOString().slice(0, 10) : null
+    } else if (BOOLEANS.has(field)) {
       if (typeof value !== 'boolean') return new Error(`${field} is true or false.`)
       patch[field] = value
     } else if (field === 'name' || field === 'email') {

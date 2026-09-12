@@ -62,7 +62,7 @@ The Rails application this replaces. What is taken from it:
 - `api/space_api.template.json` is `settings.space_api_json_template` from the
   production database, unchanged.
 
-The repository carries no licence file. Section 8 of `HANDOFF.md` says what that
+The repository carries no licence file. Section 7 of `HANDOFF.md` says what that
 means and what the lab should do about it.
 
 ### Open_Access_Control_Ethernet
@@ -87,4 +87,4 @@ the disagreement is recorded there.
 
 `hsl-web-api-spec.md`, revision 3, is the specification this repository
 implements. Where the implementation differs from it, section 2 of `HANDOFF.md`
-says where and why.
+says where and why, and section 6 says what an audit of the first pass found.

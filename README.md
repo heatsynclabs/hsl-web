@@ -2,7 +2,7 @@
 
 The HeatSync Labs API, identity provider and door controller service.
 
-Two processes, two hosts, thirteen tables, thirty nine routes. There are no
+Two processes, two hosts, thirteen tables, forty routes. There are no
 front end applications here: this repository ends at the HTTP boundary.
 
 ```
@@ -156,6 +156,12 @@ If a route is not there, the system does not do that.
 | POST | `/api/door/command` | door access | Queue a command. Audited |
 | GET | `/api/door/events` | admin | Everything the door reported |
 
+### The record
+
+| Method | Path | Guard | Does |
+| --- | --- | --- | --- |
+| GET | `/api/audit` | admin | Who changed what, newest first. `?before=` and `?limit=` |
+
 ### Service tokens
 
 | Method | Path | Guard | Does |
@@ -211,7 +217,7 @@ hsl-web/
     config.ts            every environment variable, in one place
     db.ts auth.ts tokens.ts audit.ts mail.ts log.ts http.ts
     routes/              session members certifications credentials
-                         payments door service spaceapi
+                         payments door audit service spaceapi
     index.ts             the route table above, in code
   door/src/
     adapter.ts           the interface a controller implements
@@ -228,6 +234,10 @@ Dependencies, complete.
 api:   hono  @hono/node-server  postgres  jose  @node-rs/argon2  bcryptjs  nodemailer
 door:  undici
 ```
+
+The repository root installs `postgres` as well, and nothing else, so that
+`scripts/migrate.ts` and `scripts/import.ts` can reach a database without
+belonging to either service.
 
 `bcryptjs` is temporary. When this reaches zero, delete the bcrypt branch in
 `api/src/auth.ts` and the dependency with it.

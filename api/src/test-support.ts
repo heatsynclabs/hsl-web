@@ -45,11 +45,11 @@ export interface NewMember {
 export async function makeMember(fields: NewMember = {}): Promise<{ id: string; email: string }> {
   const email = fields.email ?? `member-${Math.random().toString(36).slice(2)}@example.invalid`
   const [row] = await sql<Array<{ id: string; email: string }>>`
-    insert into members (email, name, password, roles, status, oriented, door_access)
+    insert into members (email, name, password, roles, status, oriented_on, door_access)
     values (${email}, ${fields.name ?? 'Test Member'},
             ${await hashPassword(fields.password ?? 'correct-horse-battery')},
             ${fields.roles ?? []}, ${fields.status ?? 'active'},
-            ${fields.oriented ?? false}, ${fields.doorAccess ?? false})
+            ${fields.oriented === true ? '2026-01-01' : null}, ${fields.doorAccess ?? false})
     returning id, email`
   return row as { id: string; email: string }
 }

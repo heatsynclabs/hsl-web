@@ -38,13 +38,18 @@ export const revoke: Handler<Env> = async (c) => {
   const memberId = param(c, 'id')
   const slug = param(c, 'slug')
 
-  const deleted = await change(
+  // Looked up first, so revoking something nobody holds leaves no audit row.
+  const [held] = await sql`
+    select cert_slug from member_certifications
+    where member_id = ${memberId} and cert_slug = ${slug}`
+  if (held === undefined) return missing(c, 'That certification on that member')
+
+  await change(
     { actor: actor.id, action: 'cert.revoke', target: memberId, detail: { slug } },
     (tx) => tx`
       delete from member_certifications
-      where member_id = ${memberId} and cert_slug = ${slug} returning cert_slug`,
+      where member_id = ${memberId} and cert_slug = ${slug}`,
   )
-  if (deleted.length === 0) return missing(c, 'That certification on that member')
 
   log({ evt: 'cert_revoked', member: memberId, slug, by: actor.id })
   return c.body(null, 204)

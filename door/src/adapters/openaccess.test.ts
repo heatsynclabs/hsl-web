@@ -283,3 +283,31 @@ describe('the adapter, against a board that answers the real bytes', () => {
     )
   })
 })
+
+describe('defects found in audit', () => {
+  test('a card id that is not hex is refused on its own, not by wedging the pass', async () => {
+    const { device, door } = adapter()
+
+    // The API stores a card id as text with no format rule at all, on purpose:
+    // rule Two says the hardware format is the adapter's business. So an admin
+    // can type anything into POST /api/credentials, and the adapter meets it.
+    const result = await door.uploadCards([card('a', 'not a card'), card('b', '0004B1C7')])
+
+    assert.equal(writes(device).length, 1, 'the good card was not written')
+    assert.deepEqual(
+      result.placements.map((placement) => placement.cardId),
+      ['b'],
+    )
+    assert.match(result.faults[0]?.detail?.reason as string, /not one to eight hex characters/)
+    assert.deepEqual(result.removed, ['a'])
+  })
+
+  test('the whole pass survives a card id the controller cannot hold', async () => {
+    const { door } = adapter()
+    await door.uploadCards([card('a', 'nonsense')])
+
+    // And the next pass is still quiet, rather than retrying the impossible.
+    const second = await door.uploadCards([card('a', 'nonsense')])
+    assert.equal(second.placements.length, 0)
+  })
+})
