@@ -11,6 +11,7 @@ import {
   destroySession,
   hashPassword,
   overRateLimit,
+  tooWeak,
   verifyPassword,
   type Env,
   type Member,
@@ -19,7 +20,7 @@ import { sql } from '../db.ts'
 import { bad, body, text } from '../http.ts'
 import { log } from '../log.ts'
 import { sendResetLink } from '../mail.ts'
-import { issueToken, publicKeys } from '../tokens.ts'
+import { issueToken, LIFETIME_SECONDS, publicKeys } from '../tokens.ts'
 
 /** The same answer whether the address exists or not, and the same time. */
 const WRONG = 'That email and password do not go together.'
@@ -120,7 +121,7 @@ export const changePassword: Handler<Env> = async (c) => {
 /** One hour, RS256. Any other HeatSync service verifies it against the JWKS. */
 export const token: Handler<Env> = async (c) => {
   const me = c.get('member')
-  return c.json({ token: await issueToken(me), expiresIn: 3600 })
+  return c.json({ token: await issueToken(me), expiresIn: LIFETIME_SECONDS })
 }
 
 export const jwks: Handler<Env> = async (c) => c.json(await publicKeys())
@@ -133,15 +134,6 @@ export const jwks: Handler<Env> = async (c) => c.json(await publicKeys())
 export const healthz: Handler<Env> = (c) => c.json({ ok: true })
 
 // ----------------------------------------------------------------------------
-
-const MINIMUM = 10
-
-function tooWeak(password: string): string | null {
-  if (password.length < MINIMUM) {
-    return `A password needs at least ${MINIMUM} characters. Length is what matters; a short phrase beats a short scramble.`
-  }
-  return password.length > 200 ? 'That password is longer than 200 characters.' : null
-}
 
 /**
  * Every other session goes with it. A password is changed because somebody may

@@ -7,8 +7,8 @@ Last updated 2026-09-11, after the audit in section 6.
 
 ## 1. State
 
-Two processes. 26 source files, about 4,000 lines including the two scripts, and
-2,000 lines of tests. Thirteen tables, forty routes, eight runtime
+Two processes. 26 source files, about 4,300 lines including the two scripts, and
+2,100 lines of tests. Thirteen tables, forty routes, eight runtime
 dependencies.
 
 ### What has been run
@@ -18,9 +18,9 @@ in containers, not inferred from the diff.
 
 - `make typecheck`: clean for both services.
 - `make voice`: clean.
-- The API suite, 69 tests, against a real Postgres with the schema built from
+- The API suite, 77 tests, against a real Postgres with the schema built from
   nothing by `scripts/migrate.ts`.
-- The door suite, 32 tests, including the whole codec over a real socket.
+- The door suite, 36 tests, including the whole codec over a real socket.
 - The CI workflow, step for step, from a clean checkout: three `npm ci`
   installs, the schema built from nothing, then typecheck, the copy gate and
   both suites.
@@ -195,7 +195,21 @@ These block deployment, not development. None is technical.
   failure is not reachable from the suite, which has no SMTP server to fail.
   `mail_failed` in the log is how it is seen instead.
 - **Nothing prunes `hits`, the rate limit counter, on a schedule.** It is swept
-  when it passes five thousand keys, which is bounded and not tidy.
+  when it passes five thousand keys and capped at twenty thousand, which is
+  bounded and not tidy.
+- **`HeldCard.claimed` is a field nothing reads.** It is in the interface the
+  specification defines and no adapter or caller uses it.
+- **The door service does not handle SIGTERM.** A stop part way through a tick
+  loses whatever events were held in memory at that moment. The next pass reads
+  the board again, so the loss is bounded by what had already been cleared off
+  it.
+- **`?q=` on the directory passes `%` and `_` through to `ilike`**, so a search
+  for `a_b` also matches `axb`.
+- **A failed sign in logs the address that was tried.** That is the useful
+  security log and it is also a list of addresses in the container log.
+- **An admin can flip another member's visibility preferences**, because
+  `ADMIN_FIELDS` is the member's own list plus the privileged ones. It is a
+  preference that belongs to the member and nothing stops an admin setting it.
 - **The mass clear guard is a fixed number, five.** It covers a card list that
   came back short. A lab with more than five cards revoked in one sitting will
   meet it, and the fault event says exactly what was withheld and why.
@@ -217,9 +231,9 @@ These block deployment, not development. None is technical.
 
 ## 6. The audits, and what they changed
 
-Two adversarial reads of the whole branch on 2026-09-11, after it was first
-written. Twenty defects between them, each proved with a failing test before it
-was fixed. The tests are still there.
+Three adversarial reads of the whole branch on 2026-09-11, after it was first
+written. Thirty six defects between them, each proved with a probe or a failing
+test before it was fixed. The tests are still there.
 
 ### The first pass, eleven
 
@@ -322,6 +336,82 @@ Also proved rather than assumed this round: the CI workflow runs end to end from
 a clean checkout with `npm ci` and a schema built from nothing, the import reads
 the legacy database in one snapshot rather than one per query, and the list of
 log events in `docs/operations.md` matches what the code emits.
+
+### The third pass, sixteen
+
+A line by line read of every file, with each finding proved by running it rather
+than by reasoning about it.
+
+**A mistyped URL read as the database being down.** Five routes and two request
+bodies passed a path segment straight into a `uuid` column, and Postgres refuses
+a value it cannot parse with an error rather than an empty result. So
+`/api/credentials/oops` answered 503, which is the status this API keeps for
+"something it needed did not answer", and it landed in the log as
+`request_failed`. Every id now goes through one check and answers 404.
+
+**A stored hash that would not decode answered 503.** Argon2 throws where bcrypt
+returns false, measured both ways. One truncated or hand-edited row would have
+answered 503 to every sign in that member tried, and to every poll a service
+token made, for as long as the row stood.
+
+**Postgres was published on every interface.** The second pass bound the API to
+the loopback and left the database beside it wide open: every password hash,
+every door event and the audit log, reachable from outside the host. Verified
+with `docker compose ps` before and after.
+
+**A tick interval that was not a number would have flooded the board.**
+`setInterval(fn, NaN)` runs every millisecond, measured on node 24.20, against a
+single threaded board from 2013 and against the API.
+
+**A stale threshold that was not a number meant nothing was ever stale.**
+`Number('soon')` is NaN and every comparison against NaN is false, so the door
+would have reported a reading it never took, which is the one thing section 4.7
+of the specification says must not happen.
+
+**A door name the adapter did not know opened door one.** `DOOR_ORDER` on the
+lab host and `DOORS` on the API are separate settings that can disagree, and the
+adapter fell through rather than refusing. Getting this wrong opens the wrong
+door, and it did it quietly.
+
+**One malformed event blocked every card read behind it.** A time that is not a
+time failed the insert, the whole batch was answered with 503, and the door
+service holds a refused batch and offers it again every five seconds forever.
+The API now skips what it cannot write and says how many, and the door service
+drops a batch the API refuses outright rather than offering it for ever.
+
+**A signing key that would not parse passed startup** and then answered 503 to
+every token and every JWKS read for the life of the process, because the
+rejected promise is what got cached. The keys are read at startup now, which
+also proved the escaped-newline path compose uses had never been exercised.
+
+**The rate limit counter could grow without bound.** A caller already over its
+limit still minted a key per request by sending a new address each time. The
+address is only counted while the IP is inside its own limit, and the map has a
+ceiling.
+
+Smaller: a health port already in use crashed the door service outright; a pass
+that failed part way through cleared the faults explaining why; signup had no
+upper bound on a password while reset capped at 200; the token response carried
+its own copy of the one hour lifetime; `service_tokens.last_seen` was written on
+every poll, seventeen thousand times a day, for a value nobody reads to the
+second; `DOORS=` meant one door with no name; and a legacy payment with no
+amount imported silently as 0.00 rather than as a warning.
+
+### Three things this pass proved were not defects
+
+Worth recording, because each was about to be changed on a wrong belief.
+
+**Caddy replaces a client's `X-Forwarded-For` rather than appending to it**,
+measured with a real Caddy in front of a real backend. So taking the first entry
+is the true client address behind this Caddyfile, and the per-IP rate limit
+cannot be stepped over by sending the header. Only true while no proxy is
+trusted, which is the configuration in this repository.
+
+**bcryptjs answers false for a malformed hash** rather than throwing, so the
+legacy branch needed no guard even though the Argon2 branch did.
+
+**`sql.begin` hands back the rows a transaction returned, in order**, without
+unwrapping them, which is what `change()` has been relying on.
 
 ## 7. Open licence questions
 

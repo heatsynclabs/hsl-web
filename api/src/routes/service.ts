@@ -7,7 +7,7 @@ import { change } from '../audit.ts'
 import { hashPassword, type Env } from '../auth.ts'
 import { config, COMMAND_EXPIRY_SECONDS } from '../config.ts'
 import { sql } from '../db.ts'
-import { bad, body, missing, param, text } from '../http.ts'
+import { bad, body, missing, param, text, uuid } from '../http.ts'
 import { log } from '../log.ts'
 
 const KINDS = ['entry', 'denied', 'presented', 'alarm', 'fault', 'command']
@@ -16,13 +16,23 @@ const CAPABILITIES = ['open', 'lock', 'unlock', 'alarm']
 const OUTCOMES = ['done', 'failed', 'refused', 'expired']
 const SCOPES = ['door', 'members:read', 'status:read']
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-
 /**
  * Which controller is calling. The service token says a door service is on the
  * line; this says which one, so two controllers can run side by side through
  * one token type during a switchover.
  */
+/**
+ * The time an event carries, or now.
+ *
+ * The controller has no clock, so this is when the door service read the log
+ * rather than when the card was held to the reader. A value that is not a time
+ * is replaced rather than refused.
+ */
+function when(value: unknown): string {
+  const given = text(value, 40)
+  return given !== null && Number.isFinite(Date.parse(given)) ? given : new Date().toISOString()
+}
+
 function controllerId(c: Context): string | null {
   return text(c.req.header('x-controller-id'), 64)
 }
@@ -68,9 +78,8 @@ export const placements: Handler<Env> = async (c) => {
   await sql.begin(async (tx) => {
     for (const entry of written) {
       const record = entry as { cardId?: unknown; placement?: unknown }
-      const cardId = text(record.cardId, 64)
+      const cardId = uuid(record.cardId)
       if (cardId === null || record.placement === undefined) continue
-      if (!UUID.test(cardId)) continue
       // Skipped rather than refused, so one stale id out of sixty four does not
       // roll back the placements for the rest of the pass.
       await tx`
@@ -81,7 +90,7 @@ export const placements: Handler<Env> = async (c) => {
         on conflict (controller_id, credential_id)
         do update set placement = excluded.placement, written_at = now()`
     }
-    const gone = removed.filter((id) => UUID.test(id))
+    const gone = removed.map((id) => uuid(id)).filter((id): id is string => id !== null)
     if (gone.length > 0) {
       await tx`
         delete from door_placements
@@ -139,12 +148,13 @@ export const commandResult: Handler<Env> = async (c) => {
   const controller = controllerId(c)
   if (controller === null) return needsController(c)
 
-  const id = param(c, 'id')
+  const id = uuid(c.req.param('id'))
   const form = await body(c)
   const outcome = text(form.outcome, 16)
   if (outcome === null || !OUTCOMES.includes(outcome)) {
     return bad(c, `An outcome is one of ${OUTCOMES.join(', ')}.`)
   }
+  if (id === null) return missing(c, 'An unresolved command with that id')
 
   const [resolved] = await sql<Array<{ action: string; door: string | null }>>`
     update door_commands set resolved_at = now(), outcome = ${outcome}
@@ -215,26 +225,39 @@ export const events: Handler<Env> = async (c) => {
   const form = await body(c)
   const incoming = Array.isArray(form.events) ? form.events : []
   let written = 0
+  let skipped = 0
 
   for (const entry of incoming) {
     const event = entry as Record<string, unknown>
     const kind = text(event.kind, 32)
-    if (kind === null || !KINDS.includes(kind)) continue
+    if (kind === null || !KINDS.includes(kind)) {
+      skipped += 1
+      continue
+    }
 
     const token = text(event.token, 64)
-    await sql`
-      insert into door_events (controller_id, kind, at, token, member_id, door, detail)
-      values (
-        ${controller}, ${kind}, ${text(event.at, 40) ?? new Date().toISOString()}, ${token},
-        ${token === null ? null : sql`(select member_id from credentials where token = ${token})`},
-        ${text(event.door, 32)},
-        ${event.detail === undefined || event.detail === null ? null : sql.json(event.detail as postgres.JSONValue)}
-      )`
-    written += 1
-    if (kind === 'fault') log({ evt: 'door_fault', controller, detail: event.detail })
+    try {
+      await sql`
+        insert into door_events (controller_id, kind, at, token, member_id, door, detail)
+        values (
+          ${controller}, ${kind}, ${when(event.at)}, ${token},
+          ${token === null ? null : sql`(select member_id from credentials where token = ${token})`},
+          ${text(event.door, 32)},
+          ${event.detail === undefined || event.detail === null ? null : sql.json(event.detail as postgres.JSONValue)}
+        )`
+      written += 1
+      if (kind === 'fault') log({ evt: 'door_fault', controller, detail: event.detail })
+    } catch (error) {
+      // Skipped, not refused. The controller's log is a ring the adapter has
+      // already emptied, so answering an error here makes the door service hold
+      // the whole batch and offer it again forever, and one row nothing can
+      // write would stop every card read after it from ever arriving.
+      skipped += 1
+      log({ evt: 'door_event_skipped', controller, kind, message: String(error) })
+    }
   }
 
-  return c.json({ written })
+  return c.json({ written, skipped })
 }
 
 // Service tokens --------------------------------------------------------------

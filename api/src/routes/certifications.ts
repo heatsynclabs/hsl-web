@@ -3,7 +3,7 @@ import type { Handler } from 'hono'
 import { change } from '../audit.ts'
 import type { Env } from '../auth.ts'
 import { sql } from '../db.ts'
-import { bad, body, missing, param, text } from '../http.ts'
+import { bad, body, missing, text, uuid } from '../http.ts'
 import { log } from '../log.ts'
 
 /** The tool list. Ten rows today, and the interlocks ask about these slugs. */
@@ -12,9 +12,10 @@ export const list: Handler<Env> = async (c) =>
 
 export const grant: Handler<Env> = async (c) => {
   const actor = c.get('member')
-  const memberId = param(c, 'id')
+  const memberId = uuid(c.req.param('id'))
   const slug = text((await body(c)).slug, 64)
   if (slug === null) return bad(c, 'Send the slug of the certification to grant.')
+  if (memberId === null) return missing(c, 'That member')
 
   const [member] = await sql`select id from members where id = ${memberId}`
   if (member === undefined) return missing(c, 'That member')
@@ -35,8 +36,9 @@ export const grant: Handler<Env> = async (c) => {
 
 export const revoke: Handler<Env> = async (c) => {
   const actor = c.get('member')
-  const memberId = param(c, 'id')
-  const slug = param(c, 'slug')
+  const memberId = uuid(c.req.param('id'))
+  const slug = text(c.req.param('slug'), 64)
+  if (memberId === null || slug === null) return missing(c, 'That certification on that member')
 
   // Looked up first, so revoking something nobody holds leaves no audit row.
   const [held] = await sql`

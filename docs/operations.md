@@ -52,6 +52,16 @@ copy. Two refusals are worth knowing before a deploy:
   and the API does not start. A deployment that cannot send mail cannot reset a
   password, and a member locked out has no other way in.
 
+Two of those refusals are about values that are present and wrong rather than
+missing. A setting that should be a whole number and is not stops the process,
+because `Number('soon')` is NaN and every comparison against NaN is false, so a
+stale threshold nobody typed correctly would mean the door never reports a stale
+reading. And a signing key that will not parse stops it too, at startup, rather
+than answering 503 to every token for the life of the process.
+
+Neither the database nor the API is published beyond the loopback. Caddy is what
+the world reaches, and `docker compose ps` is how to check that is still true.
+
 `make keys` prints an RSA pair. All secrets live in repository secrets and reach
 the host as environment variables. No config file on a server holds a
 credential.
@@ -94,10 +104,12 @@ size limit set.
 api    login_ok  login_fail  password_upgraded  password_changed  rate_limited
        member_created  member_updated  cert_granted  cert_revoked
        credential_issued  credential_revoked  payment_recorded
-       door_command  door_fault  duplicate_refused  request_failed
-       listening  signing_key_generated  mail_not_sent  mail_failed
+       door_command  door_fault  door_event_skipped  duplicate_refused
+       hash_unreadable  request_failed  listening  signing_key_generated
+       mail_not_sent  mail_failed
 
-door   door_started  door_link_down  door_link_up  using_simulated_controller
+door   door_started  door_link_down  door_link_up  events_dropped
+       health_port_unavailable  using_simulated_controller
 
 simulator   simulator_listening  device_request
 ```

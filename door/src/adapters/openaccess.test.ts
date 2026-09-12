@@ -238,6 +238,17 @@ describe('the adapter, against a board that answers the real bytes', () => {
     assert.deepEqual(await door.state(), { front: 'locked', rear: 'locked' })
   })
 
+  test('a door this controller does not have is refused, not sent to door one', async () => {
+    const { device, door } = adapter()
+
+    // DOOR_ORDER here and DOORS on the API are separate settings. Falling
+    // through to door 1 on a name it does not know is how the wrong door opens
+    // with nobody able to say why.
+    await assert.rejects(() => door.open('side'), /doors called front and rear/)
+    await assert.rejects(() => door.setLock('side', false), /doors called front and rear/)
+    assert.deepEqual(device.pulses, [])
+  })
+
   test('the alarm is declared and answers', async () => {
     const { device, door } = adapter()
     assert.deepEqual(door.capabilities(), ['open', 'lock', 'unlock', 'alarm'])

@@ -219,6 +219,21 @@ The placement is deliberately not in the digest. The adapter writes placements
 itself, so including them would make every pass change the version it had just
 answered.
 
+## What a wrong request answers
+
+Every id in this system is a uuid, and Postgres refuses a value it cannot parse
+with an error rather than an empty result. So every id, whether it arrives in a
+path or in a body, goes through one check in `api/src/http.ts` and answers 404.
+Without it a mistyped URL reads as the database being down, both to the person
+who typed it and in the log, and 503 is a status this API keeps for meaning
+exactly that.
+
+The same reasoning runs through the rest: a stored hash that will not decode is
+a refusal rather than a failure, a duplicate on a unique index is a 409 rather
+than a 503, and an event the door service sends that cannot be written is
+skipped and counted rather than failing the batch, because a refused batch is
+one the door service will offer again every five seconds forever.
+
 ## The audit mechanism
 
 Discipline does not work. Privileged writes go through one helper in
@@ -305,6 +320,10 @@ A card id this device cannot hold at all is a fault against that one card. It
 used to be an exception out of `uploadCards`, which took the whole pass with it
 on every tick, so one unusable value in the members database froze the card table
 for the building.
+
+A door name the adapter was not configured with is refused rather than sent to
+door one. `DOOR_ORDER` on the lab host and `DOORS` on the API are separate
+settings that can disagree, and getting that wrong opens the wrong door.
 
 ### What the adapter owns
 

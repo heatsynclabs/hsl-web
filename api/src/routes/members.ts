@@ -3,9 +3,9 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import type { Handler } from 'hono'
 
 import { change } from '../audit.ts'
-import { byEmail, hashPassword, overRateLimit, type Env, type Member } from '../auth.ts'
+import { byEmail, hashPassword, overRateLimit, tooWeak, type Env, type Member } from '../auth.ts'
 import { sql } from '../db.ts'
-import { TEXT_LIMIT, bad, body, missing, param, text } from '../http.ts'
+import { TEXT_LIMIT, bad, body, missing, param, text, uuid } from '../http.ts'
 import { log } from '../log.ts'
 import { sendResetLink } from '../mail.ts'
 
@@ -138,7 +138,8 @@ export const signup: Handler<Env> = async (c) => {
 
   if (name === null || email === null) return bad(c, 'Send a name and an email address.')
   if (!email.includes('@')) return bad(c, 'That does not look like an email address.')
-  if (password.length < 10) return bad(c, 'A password needs at least 10 characters.')
+  const weak = tooWeak(password)
+  if (weak !== null) return bad(c, weak)
   if (level instanceof Error) return bad(c, level.message)
   if (form.waiverSigned !== true) {
     return bad(c, 'The waiver has to be signed before an account exists.')

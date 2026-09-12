@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { describe, test } from 'node:test'
 
 import type { Card, Capability, DoorEvent, DoorState, UploadResult } from './adapter.ts'
@@ -13,6 +14,7 @@ function stubLink(
     version?: string
     commands?: Command[]
     refuseEvents?: boolean
+    rejectEvents?: number
   },
 ) {
   const calls: string[] = []
@@ -29,6 +31,11 @@ function stubLink(
     },
     postEvents: async (events: DoorEvent[]) => {
       if (overrides.refuseEvents === true) throw new Error('the API is not answering')
+      if (overrides.rejectEvents !== undefined) {
+        const failure = new Error('refused') as Error & { status?: number }
+        failure.status = overrides.rejectEvents
+        throw failure
+      }
       if (events.length > 0) calls.push(`postEvents:${events.length}`)
     },
     fetchCards: async () => {
@@ -150,5 +157,65 @@ describe('defects found in audit', () => {
       up.calls.includes('postEvents:1'),
       'the read the API refused was dropped rather than held',
     )
+  })
+})
+
+describe('the third audit', () => {
+  test('events the API refuses outright are dropped, not offered forever', async () => {
+    const { device, door } = adapter()
+    device.present('0000FFFF')
+
+    // A 4xx is the API saying it will never take these. Holding them would
+    // offer the same batch every five seconds and keep every later card read
+    // behind it.
+    const refusing = stubLink({ rejectEvents: 400 })
+    const mem = memo()
+    await assert.rejects(() => tick(refusing.link, door, mem))
+    assert.deepEqual(mem.undelivered, [])
+
+    const up = stubLink({})
+    await tick(up.link, door, mem)
+    assert.ok(!up.calls.some((call) => call.startsWith('postEvents')))
+  })
+
+  test('events the link could not carry are held', async () => {
+    const { device, door } = adapter()
+    device.present('0000FFFF')
+
+    const down = stubLink({ rejectEvents: 503 })
+    const mem = memo()
+    await assert.rejects(() => tick(down.link, door, mem))
+    assert.equal(mem.undelivered.length, 1)
+  })
+})
+
+describe('the door service configuration', () => {
+  test('a tick interval that is not a number stops the process', () => {
+    const start = (env: Record<string, string>): string => {
+      try {
+        execFileSync(process.execPath, ['-e', 'import("./src/main.ts")'], {
+          env: {
+            ...process.env,
+            API_URL: 'http://localhost:1',
+            SERVICE_TOKEN: 'x.y',
+            CONTROLLER_ID: 'openaccess',
+            CONTROLLER: 'fake',
+            CONTROLLER_PASSWORD: '1234',
+            ...env,
+          },
+          stdio: 'pipe',
+          timeout: 10_000,
+        })
+        return 'started'
+      } catch (error) {
+        return String((error as { stderr?: Buffer }).stderr ?? '')
+      }
+    }
+
+    // setInterval(fn, NaN) runs every millisecond, which is a flood against a
+    // single threaded board rather than a poll.
+    assert.match(start({ TICK_SECONDS: 'often' }), /not a whole number/)
+    assert.match(start({ CONTROLLER_PASSWORD: '0x1234' }), /four hex characters/)
+    assert.match(start({ CONTROLLER_PASSWORD: '0000' }), /four hex characters/)
   })
 })

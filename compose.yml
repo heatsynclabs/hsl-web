@@ -12,7 +12,10 @@ services:
       POSTGRES_USER: hsl
       POSTGRES_PASSWORD: ${PG_PASS:?set PG_PASS in .env, or run make secrets}
     volumes: [db:/var/lib/postgresql/data]
-    ports: ["5432:5432"]
+    # The loopback, not every interface. This is the members database: every
+    # password hash, every door event and the audit log. It is published at all
+    # only so the migration and import scripts can reach it from the host.
+    ports: ["127.0.0.1:${PG_PORT:-5432}:5432"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U hsl"]
       interval: 10s

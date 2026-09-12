@@ -3,7 +3,7 @@ import type { Handler } from 'hono'
 import { change } from '../audit.ts'
 import type { Env } from '../auth.ts'
 import { sql } from '../db.ts'
-import { bad, body, missing, param, text } from '../http.ts'
+import { bad, body, missing, text, uuid } from '../http.ts'
 import { log } from '../log.ts'
 
 /**
@@ -11,7 +11,9 @@ import { log } from '../log.ts'
  * existing offline rails collect the money.
  */
 export const forMember: Handler<Env> = async (c) => {
-  const id = param(c, 'id')
+  const id = uuid(c.req.param('id'))
+  if (id === null) return missing(c, 'That member')
+
   const [member] = await sql`select id from members where id = ${id}`
   if (member === undefined) return missing(c, 'That member')
 
@@ -25,7 +27,7 @@ export const forMember: Handler<Env> = async (c) => {
 export const record: Handler<Env> = async (c) => {
   const actor = c.get('member')
   const form = await body(c)
-  const memberId = text(form.memberId, 64)
+  const memberId = uuid(form.memberId)
   const amount = readAmount(form.amount)
   const paidOn = readDate(form.paidOn)
 

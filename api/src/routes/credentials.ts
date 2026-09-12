@@ -3,7 +3,7 @@ import type { Handler } from 'hono'
 import { change } from '../audit.ts'
 import type { Env } from '../auth.ts'
 import { sql } from '../db.ts'
-import { bad, body, missing, param, text } from '../http.ts'
+import { bad, body, missing, text, uuid } from '../http.ts'
 import { log } from '../log.ts'
 
 /**
@@ -33,7 +33,7 @@ export const issue: Handler<Env> = async (c) => {
   const actor = c.get('member')
   const form = await body(c)
   const token = text(form.token, 64)
-  const memberId = text(form.memberId, 64)
+  const memberId = uuid(form.memberId)
   const label = text(form.label, 200)
 
   if (token === null || memberId === null) return bad(c, 'Send a card id and a member id.')
@@ -66,7 +66,8 @@ export const issue: Handler<Env> = async (c) => {
  */
 export const revoke: Handler<Env> = async (c) => {
   const actor = c.get('member')
-  const id = param(c, 'id')
+  const id = uuid(c.req.param('id'))
+  if (id === null) return missing(c, 'An active card with that id')
 
   // Looked up first, so a revoke of a card that is already revoked leaves no
   // audit row. The log is the record of what happened, and an entry for

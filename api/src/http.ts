@@ -21,6 +21,20 @@ export function param(c: Context, name: string): string {
   return c.req.param(name) ?? ''
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * A uuid, or null.
+ *
+ * Every id in this system is one, and Postgres refuses anything else with an
+ * error rather than an empty result. Without this a mistyped URL reads as the
+ * database being down, both to the person who typed it and in the log.
+ */
+export function uuid(value: unknown): string | null {
+  const given = text(value, 64)
+  return given !== null && UUID.test(given) ? given : null
+}
+
 export function bad(c: Context, message: string): Response {
   return c.json({ error: message }, 400)
 }

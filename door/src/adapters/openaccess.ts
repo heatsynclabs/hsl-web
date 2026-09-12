@@ -450,7 +450,20 @@ export function createOpenAccess(options: OpenAccessOptions): DoorAdapter {
   let readable: boolean | null = null
   let pending: DoorEvent[] = []
 
-  const doorNumber = (door: string): 1 | 2 => (door === door2 ? 2 : 1)
+  /**
+   * Which door the board calls this one. A name this controller was not
+   * configured with is refused rather than falling through to door 1, because
+   * DOOR_ORDER here and DOORS on the API are separate settings that can
+   * disagree, and the failure that matters is opening the wrong door quietly.
+   */
+  const doorNumber = (door: string): 1 | 2 => {
+    if (door === door1) return 1
+    if (door === door2) return 2
+    throw new Error(
+      `This controller has doors called ${door1} and ${door2}, not ${door}. Nothing was sent. ` +
+        'DOOR_ORDER here and DOORS on the API have to name the same doors.',
+    )
+  }
 
   async function readTable(): Promise<{ rows: Placement[]; readable: boolean }> {
     const table = parseCardTable(await send('a'))
@@ -492,8 +505,7 @@ export function createOpenAccess(options: OpenAccessOptions): DoorAdapter {
       const plan = planUpload(cards, held)
       const placements: UploadResult['placements'] = []
       const removed: string[] = [...plan.rejected]
-      const faults = [...plan.faults, ...pending]
-      pending = []
+      const faults = [...plan.faults]
 
       for (const { card, placement } of plan.writes) {
         const parameter = `m${padSlot(placement.slot)}&p${String(placement.mask).padStart(3, '0')}&t${placement.tag}`
@@ -521,6 +533,11 @@ export function createOpenAccess(options: OpenAccessOptions): DoorAdapter {
       // is a card being offered for enrolment rather than a card being denied.
       issued.clear()
       for (const card of plan.holding) issued.set(card.tag, card.token)
+
+      // Emptied here rather than at the top, so a board that stops answering
+      // part way through a pass does not take the reason for it with it.
+      faults.push(...pending)
+      pending = []
 
       return { placements, removed, faults }
     },

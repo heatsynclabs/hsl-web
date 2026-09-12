@@ -1,5 +1,5 @@
 import type { DoorAdapter, DoorEvent } from './adapter.ts'
-import type { Command, Link } from './link.ts'
+import type { Command, Link, LinkFailure } from './link.ts'
 
 /**
  * One tick. Five seconds apart, with the slow work on a counter.
@@ -76,8 +76,27 @@ async function deliver(link: Link, mem: Memo, events: readonly DoorEvent[]): Pro
   }
   if (mem.undelivered.length === 0) return
 
-  await link.postEvents(mem.undelivered)
-  mem.undelivered = []
+  try {
+    await link.postEvents(mem.undelivered)
+    mem.undelivered = []
+  } catch (error) {
+    // A refusal is the API saying it will never take these. Holding them would
+    // offer the same batch every five seconds forever and keep every later card
+    // read behind it. Anything else is the link being down, and those wait.
+    const status = (error as LinkFailure).status ?? 0
+    if (status >= 400 && status < 500) {
+      process.stdout.write(
+        `${JSON.stringify({
+          at: new Date().toISOString(),
+          evt: 'events_dropped',
+          count: mem.undelivered.length,
+          status,
+        })}\n`,
+      )
+      mem.undelivered = []
+    }
+    throw error
+  }
 }
 
 async function runCommand(link: Link, adapter: DoorAdapter, command: Command): Promise<void> {
@@ -94,7 +113,10 @@ async function run(adapter: DoorAdapter, command: Command): Promise<void> {
 
   switch (command.action) {
     case 'open':
-      return adapter.open(door === 'all' ? '' : door)
+      // The API refuses an open with no door named, so this is a command that
+      // did not come from it.
+      if (command.door === null) throw new Error('An open has to name a door.')
+      return adapter.open(command.door)
     case 'lock':
       return adapter.setLock(door, true)
     case 'unlock':

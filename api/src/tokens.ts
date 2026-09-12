@@ -5,7 +5,10 @@ import { config } from './config.ts'
 import { log } from './log.ts'
 
 const ALGORITHM = 'RS256'
-const LIFETIME = '1h'
+
+/** One hour, in the two forms jose and the response each want. */
+export const LIFETIME_SECONDS = 3600
+const LIFETIME = `${LIFETIME_SECONDS}s`
 
 /**
  * Rotation is publishing both keys under different kid values, signing with the
@@ -56,6 +59,18 @@ async function load(): Promise<Keys> {
 function loaded(): Promise<Keys> {
   keys ??= load()
   return keys
+}
+
+/**
+ * Read the keys now rather than on the first request that needs one.
+ *
+ * A PEM that will not parse passes the check in config.ts, which only looks for
+ * a value. Without this the process starts, serves everything else, and answers
+ * 503 to every token and every JWKS read for as long as it runs, because the
+ * rejected promise is what gets cached.
+ */
+export async function loadKeys(): Promise<void> {
+  await loaded()
 }
 
 export interface TokenSubject {

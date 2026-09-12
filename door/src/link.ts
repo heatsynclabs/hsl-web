@@ -11,6 +11,14 @@ import type { Card, Capability, DoorEvent, DoorState, UploadResult } from './ada
  * the ways each of them fails quietly.
  */
 
+/**
+ * An Error carrying the status that came with it, so the loop can tell a
+ * refusal apart from a link that is down.
+ */
+export interface LinkFailure extends Error {
+  status?: number
+}
+
 export interface Command {
   id: string
   action: string
@@ -55,9 +63,11 @@ export function createLink(options: LinkOptions): Link {
 
     const text = await answer.body.text()
     if (answer.statusCode >= 400) {
-      throw new Error(
+      const failure = new Error(
         `The API answered ${answer.statusCode} to ${method} ${path}. It said: ${text.slice(0, 200)}`,
-      )
+      ) as LinkFailure
+      failure.status = answer.statusCode
+      throw failure
     }
     return text === '' ? null : JSON.parse(text)
   }

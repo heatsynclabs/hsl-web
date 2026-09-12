@@ -4,6 +4,7 @@ import { Hono } from 'hono'
 import { doorAccess, member, oriented, role, service, session, type Env } from './auth.ts'
 import { config } from './config.ts'
 import { log } from './log.ts'
+import { loadKeys } from './tokens.ts'
 import * as audit from './routes/audit.ts'
 import * as certifications from './routes/certifications.ts'
 import * as credentials from './routes/credentials.ts'
@@ -111,6 +112,7 @@ export { app }
 // Only when this file is the process, so a test can import the route table
 // without a socket coming with it.
 if (import.meta.filename === process.argv[1]) {
+  await loadKeys()
   serve({ fetch: app.fetch, port: config.port })
   log({ evt: 'listening', port: config.port, issuer: config.issuer })
 }

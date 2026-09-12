@@ -264,6 +264,11 @@ for (const payment of payments) {
   if (payment.userId === null || !memberId.has(payment.userId)) {
     warnings.push(`payment ${payment.id} belongs to no user that exists, and is left behind`)
   }
+  // legacy payments.amount has no not-null constraint. It lands as 0.00, which
+  // is a number nobody entered, so it is said out loud rather than assumed.
+  if (payment.amount === null) {
+    warnings.push(`payment ${payment.id} has no amount, and imports as 0.00`)
+  }
 }
 for (const contract of contracts) {
   if (contract.userId === null || !memberId.has(contract.userId)) {

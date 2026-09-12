@@ -26,6 +26,25 @@ function required(name: string): string {
   return value
 }
 
+/**
+ * A whole number, or the process does not start.
+ *
+ * `setInterval(fn, NaN)` runs every millisecond, measured on node 24.20. A
+ * TICK_SECONDS nobody typed correctly would turn this loop into a flood against
+ * the API and against a single threaded 2013 board, which is the opposite of
+ * what a poll interval is for.
+ */
+function count(name: string, fallback: number): number {
+  const raw = process.env[name]
+  if (raw === undefined || raw === '') return fallback
+
+  const value = Number(raw)
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${name} is ${raw}, which is not a whole number. The door service did not start.`)
+  }
+  return value
+}
+
 const config = {
   apiUrl: required('API_URL').replace(/\/$/, ''),
   serviceToken: required('SERVICE_TOKEN'),
@@ -35,9 +54,12 @@ const config = {
   /** openaccess for the board the lab owns, fake for the simulator. */
   controller: process.env.CONTROLLER ?? 'openaccess',
   /** Controller door 1 and door 2, in that order. */
-  doors: (process.env.DOOR_ORDER ?? 'front,rear').split(',').map((door) => door.trim()),
-  tickSeconds: Number(process.env.TICK_SECONDS ?? 5),
-  healthPort: Number(process.env.HEALTH_PORT ?? 9000),
+  doors: (process.env.DOOR_ORDER ?? 'front,rear')
+    .split(',')
+    .map((door) => door.trim())
+    .filter((door) => door !== ''),
+  tickSeconds: count('TICK_SECONDS', 5),
+  healthPort: count('HEALTH_PORT', 9000),
 }
 
 /**
@@ -113,11 +135,18 @@ async function pass(): Promise<void> {
   }
 }
 
-createServer((_incoming, response) => {
+const health = createServer((_incoming, response) => {
   response
     .writeHead(lastError === null ? 200 : 503, { 'content-type': 'application/json' })
     .end(JSON.stringify({ ok: lastError === null, lastTickAt, lastError }))
-}).listen(config.healthPort, '127.0.0.1')
+})
+
+// The loop is the job and this is a convenience, so a port already in use is
+// worth saying and not worth stopping for. Without a listener here it is an
+// uncaught exception, and a door service that exits because a health check
+// could not bind is a door service that is not writing card tables.
+health.on('error', (error) => log({ evt: 'health_port_unavailable', message: String(error) }))
+health.listen(config.healthPort, '127.0.0.1')
 
 setInterval(() => void pass(), config.tickSeconds * 1000)
 void pass()

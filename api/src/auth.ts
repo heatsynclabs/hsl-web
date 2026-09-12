@@ -60,6 +60,35 @@ export function hashPassword(password: string): Promise<string> {
 }
 
 /**
+ * Argon2 throws on a hash it cannot decode, where bcrypt answers false. A row
+ * holding a truncated or hand-edited hash would otherwise answer 503 to every
+ * sign in that member tried, and to every poll a service token made, which
+ * reads as the database being down rather than as one broken row.
+ */
+async function argonMatches(hash: string, secret: string): Promise<boolean> {
+  try {
+    return await argonVerify(hash, secret)
+  } catch (error) {
+    log({ evt: 'hash_unreadable', message: String(error) })
+    return false
+  }
+}
+
+/** The shortest password this system accepts, and the longest. */
+const MINIMUM_PASSWORD = 10
+const MAXIMUM_PASSWORD = 200
+
+/** Why this password is not one, or null. */
+export function tooWeak(password: string): string | null {
+  if (password.length < MINIMUM_PASSWORD) {
+    return `A password needs at least ${MINIMUM_PASSWORD} characters. Length is what matters; a short phrase beats a short scramble.`
+  }
+  return password.length > MAXIMUM_PASSWORD
+    ? `That password is longer than ${MAXIMUM_PASSWORD} characters.`
+    : null
+}
+
+/**
  * Argon2id for anything written from now on. The 1,030 bcrypt hashes Devise
  * wrote import verbatim and nobody resets anything: the first successful sign
  * in verifies with bcrypt and replaces the hash in the same breath.
@@ -72,11 +101,11 @@ export function hashPassword(password: string): Promise<string> {
 export async function verifyPassword(member: Member | null, password: string): Promise<boolean> {
   const stored = member?.password
   if (stored === undefined || stored === null || stored === '') {
-    await argonVerify(NO_SUCH_MEMBER, password)
+    await argonMatches(NO_SUCH_MEMBER, password)
     return false
   }
 
-  if (stored.startsWith('$argon2')) return argonVerify(stored, password)
+  if (stored.startsWith('$argon2')) return argonMatches(stored, password)
 
   const ok = await bcryptCompare(password + config.pepper, stored)
   if (ok && member !== null) {
@@ -284,7 +313,7 @@ export function service(scope: string): MiddlewareHandler<Env> {
       select id, name, scopes, secret_hash from service_tokens
       where id = ${id} and not revoked`
 
-    if (token === undefined || !(await argonVerify(token.secretHash, secret))) {
+    if (token === undefined || !(await argonMatches(token.secretHash, secret))) {
       bump(attempts)
       return refuse(c, 401, 'That service token is not one this API issued, or it was revoked.')
     }
@@ -292,7 +321,12 @@ export function service(scope: string): MiddlewareHandler<Env> {
       return refuse(c, 403, `Service token ${id} does not hold the ${scope} scope.`)
     }
 
-    await sql`update service_tokens set last_seen = now() where id = ${id}`
+    // Once a minute at most. A door service polls every five seconds forever,
+    // and nobody reads this to the second, so writing a row every time is
+    // seventeen thousand writes a day for no reader.
+    await sql`
+      update service_tokens set last_seen = now()
+      where id = ${id} and (last_seen is null or last_seen < now() - interval '1 minute')`
     c.set('service', { id: token.id, name: token.name, scopes: token.scopes })
     return next()
   }
@@ -302,10 +336,21 @@ export function service(scope: string): MiddlewareHandler<Env> {
 
 const hits = new Map<string, { count: number; resetAt: number }>()
 
+/**
+ * How many keys the counter will hold. Past it the oldest quarter go, which
+ * costs those keys their window and keeps a process that cannot be made to
+ * allocate without limit.
+ */
+const MAX_KEYS = 20_000
+
 /** One counter in fifteen minute windows, shared by everything that counts. */
 function bump(key: string): number {
   const now = Date.now()
   if (hits.size > 5000) for (const [old, hit] of hits) if (hit.resetAt < now) hits.delete(old)
+  if (hits.size > MAX_KEYS) {
+    const oldest = [...hits.entries()].sort((a, b) => a[1].resetAt - b[1].resetAt)
+    for (const [old] of oldest.slice(0, Math.floor(MAX_KEYS / 4))) hits.delete(old)
+  }
 
   const hit = hits.get(key)
   if (hit === undefined || hit.resetAt < now) {
@@ -328,14 +373,19 @@ function peek(key: string): number {
  * on a redeploy costs one window.
  */
 export function overRateLimit(c: Context, email: string | null): boolean {
-  const keys = [`ip:${clientIp(c) ?? 'unknown'}`]
-  if (email !== null && email !== '') keys.push(`email:${email.toLowerCase()}`)
-
-  let over = false
-  for (const key of keys) if (bump(key) > RATE_LIMIT) over = true
-
-  if (over) log({ evt: 'rate_limited', keys: keys.length })
-  return over
+  // The address is only counted once the IP is still inside its own limit.
+  // Counting it either way lets one caller mint a new key per request by
+  // sending a new address each time, which is a map that grows forever.
+  if (bump(`ip:${clientIp(c) ?? 'unknown'}`) > RATE_LIMIT) {
+    log({ evt: 'rate_limited', by: 'ip' })
+    return true
+  }
+  if (email === null || email === '') return false
+  if (bump(`email:${email.toLowerCase()}`) > RATE_LIMIT) {
+    log({ evt: 'rate_limited', by: 'email' })
+    return true
+  }
+  return false
 }
 
 /** Test seam. Nothing in the running service calls this. */
