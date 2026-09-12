@@ -3,24 +3,25 @@
 What exists, what is not done, what nobody has confirmed, and who has to decide.
 Adding to this file is not an admission. It is the point.
 
-Last updated 2026-09-12, after the four passes in section 6.
+Last updated 2026-09-12, after the five passes in section 6.
 
 ## 1. State
 
-Two processes. 26 source files, about 4,300 lines including the two scripts, and
+Two processes. 26 source files, about 4,400 lines including the two scripts, and
 2,200 lines of tests. Thirteen tables, forty routes, eight runtime
 dependencies.
 
 ### What has been run
 
-Everything below was executed on 2026-09-11 against Node 24.20 and Postgres 17
-in containers, not inferred from the diff.
+Everything below was executed against Node 24.20 and Postgres 17 in containers,
+not inferred from the diff. The first group is from 2026-09-11, the group under
+the fifth pass from 2026-09-12.
 
 - `make typecheck`: clean for both services.
 - `make voice`: clean.
-- The API suite, 78 tests, against a real Postgres with the schema built from
+- The API suite, 85 tests, against a real Postgres with the schema built from
   nothing by `scripts/migrate.ts`.
-- The door suite, 36 tests, including the whole codec over a real socket.
+- The door suite, 39 tests, including the whole codec over a real socket.
 - The CI workflow, step for step, from a clean checkout: three `npm ci`
   installs, the schema built from nothing, then typecheck, the copy gate and
   both suites.
@@ -46,6 +47,26 @@ in containers, not inferred from the diff.
   the card at slot 200 moved to one the reader can see, and every column the
   audit recovered arrived, including a waiver date for the member who signed
   without a contract row.
+
+The fifth pass ran these for the first time.
+
+- **Two controllers side by side**, which is section 5.7 and had never been
+  exercised. Two simulated boards and two door services, `alpha` and `beta`,
+  against one API for the length of the pass. Each held its own placements for
+  the same two cards, each took only its own commands, an unissued card at one
+  reader and an issued card at the other arrived as `presented` and `denied` on
+  the right controller, and revoking a card cleared it off both boards. Two
+  defects came out of it and are in section 6.
+- **An hour of both door services running**, sampled every minute, with a card
+  at each reader every twenty seconds and a command every minute. The table is
+  in section 6. One defect came out of it.
+- **The sign in timing side channel, measured** rather than reasoned about, and
+  two others beside it. Section 6.
+- **The Caddyfile, with a real Caddy in front of the API**, to read the headers
+  it actually sets rather than the ones it is asked for.
+- **Every base image pinned by digest**, and the pinned references built and ran:
+  the API image from the pinned `node`, and `docker create` on the pinned
+  `postgres` and `caddy`, which is the form CI and compose both use.
 
 ### What has not been run
 
@@ -112,8 +133,9 @@ reading as closed, where the legacy document repeated its last reading forever.
 
 ## 3. Unknowns that need somebody at the lab
 
-Nobody has been in front of the controller. Each of these is about five minutes
-with VLAN access, and each one changes something.
+Nobody has been in front of the controller. Most of these are about five minutes
+with VLAN access, and each one changes something. The last three want the
+firmware source or the lab website rather than the board itself.
 
 1. **Dump the card table with `?a`.** Three things at once: whether the deployed
    board prints tags or asterisks, whether the card at slot 200 is really on the
@@ -131,7 +153,23 @@ with VLAN access, and each one changes something.
 4. **The live `PRIVPASSWORD`, controller IP and MAC.** The committed `0x1234` is
    the public example. The value to configure is the four characters `1234`, and
    the door service refuses to start on anything else.
-5. **Whether the ESP8266 status LED can speak https.** The SpaceAPI template is
+5. **Whether the event log holds signed or unsigned 16 bit values.** `addToLog`
+   splits a 32 bit card id across two entries, so the high half has to fit in
+   sixteen bits. Signed puts the ceiling at `0x3FFF7FFF` and a card past it is
+   dropped from the log; unsigned puts it at `0x7FFFFFFF` and a card between the
+   two comes back as a different, entirely plausible card id. `LOG_TAG_CEILING`
+   in `door/src/adapters/openaccess.ts` assumes signed, which is the lower of
+   the two, and raises a fault for anything past it. Nothing the lab holds
+   reaches either ceiling: the longest card id in the dump is seven hex
+   characters. It matters the first time somebody buys a batch of eight
+   character fobs. Reading the declaration behind `logData` settles it.
+6. **Whether anything reads `/space_api.json` from another origin.** Measured
+   with a real Caddy: no CORS header is set on it, so a browser page on another
+   origin cannot read it with JavaScript. The ESP8266 is not a browser and does
+   not care. The lab website does, if it is served from somewhere else and
+   fetches this rather than having it rendered in. Same family as the question
+   below and the same silent failure.
+7. **Whether the ESP8266 status LED can speak https.** The SpaceAPI template is
    `http` throughout, including its own `url`, `logo`, `cam` and `feeds`, because
    it is production's copy unchanged. A part reading `http://host/space_api.json`
    meets a redirect and then needs TLS with a CA bundle. Nobody has looked at
@@ -202,6 +240,24 @@ These block deployment, not development. None is technical.
   door service resolves everything it claims, and a pass cannot overlap the one
   before it, so this shows up only if the service dies mid-command. Then the
   command runs twice, or expires after two minutes, depending on timing.
+- **Claiming is not exclusive, so two door services on one controller id both
+  get every command.** Measured: four simultaneous claims all came back holding
+  the same command. `claimed_at` is written and nothing reads it. The one that
+  posts its result first gets a 204 and the others get a 404, which `runCommand`
+  meets as a link failure, so the losers log `door_link_down` and fail their
+  health check until the next tick. Left as it is on purpose: filtering on
+  `claimed_at` is what would make it exclusive, and that is the same filter that
+  lets a service which died mid-command pick the command back up. The case is a
+  deploy where the old container outlives the new one, or two lab hosts pointed
+  at one controller id, and the commands themselves are all safe to run twice.
+- **Nothing retires a controller.** `door_state` rows are written by the
+  controller and removed only when that same controller stops naming a door, so
+  a board that is unplugged sits there forever with a frozen `reported_at`.
+  After the week in section 5.7 the retired one still counts as reporting, so
+  every command has to name a controller from then on. Retiring one is
+  `delete from door_state where controller_id = '...'` in psql, and there is no
+  route for it because it is a rare deliberate act rather than a thing an admin
+  does.
 - **The first tick after a restart can label a refused read as `presented`.**
   The adapter learns which cards are issued from `uploadCards`, and the drain
   runs before it on that one tick. The window is five seconds from process
@@ -253,14 +309,14 @@ These block deployment, not development. None is technical.
 
 ## 6. The audits, and what they taught
 
-Four adversarial passes over the whole branch, on 2026-09-11 and 2026-09-12,
-after it was first written. Thirty nine defects, each proved with a probe or a
+Five adversarial passes over the whole branch, on 2026-09-11 and 2026-09-12,
+after it was first written. Forty three defects, each proved with a probe or a
 failing test before it was fixed, and each fix covered by a test where a test
 can reach it.
 
-The four commits after the first carry the blow by blow. What is worth reading
-here is what kept coming back, because the next pass should start by looking for
-more of the same.
+The commits after the first carry the blow by blow. What is worth reading here
+is what kept coming back, because the next pass should start by looking for more
+of the same.
 
 ### What each pass looked for
 
@@ -270,6 +326,7 @@ more of the same.
 | 2 | Failure, load, and clocks | 9 |
 | 3 | Line by line, every file, nothing assumed | 16 |
 | 4 | Running the things that had only been written | 3 |
+| 5 | Two controllers, a soak, concurrency, and measuring | 4 |
 
 ### The patterns
 
@@ -316,6 +373,86 @@ contract row. The trim in the specification is deliberate and mostly right, and
 it is worth checking every dropped column against the legacy table rather than
 trusting that.
 
+**A comment naming a mechanism that cannot fire, and a test named after it.**
+The fifth pass found one and it had survived four readings. `door_placements`
+cascades on a delete of the credential, and revoking a card is an update, so
+nothing removed the placement. The test that would have caught it is called
+"revoking a card takes its placement with it" and does not revoke a card: it
+deletes the row in SQL, which no route does. Four passes read the name, agreed
+with it, and moved on. A test whose name claims more than its body does is worse
+than no test, because it spends the attention that would have found the gap.
+
+**A wrong request answering as a broken system, in the case nobody had set up.**
+The same pattern as pass one, three shapes on, and it took running two
+controllers to reach it. With two reporting, a command that does not name one
+answered 503, and so did a command naming a controller that does not exist, with
+the text "No controller has reported to this API" while two were reporting.
+
+**Something that only grows.** Two of them, and only a soak reaches either. The
+simulator remembered every query it had ever answered, measured at about 105
+bytes a request and 11 MB per hundred thousand, which is nine days at the tick
+rate and well inside the week section 5.7 asks two simulators to run. It is
+bounded at a thousand now, which is far more than the tests that read it need.
+The other is `door_placements`, above. Both are the shape the code already knows
+to avoid: `HELD_EVENT_LIMIT` and `MAX_KEYS` exist because a process that grows
+without limit takes the lab host down, and these two were simply missed.
+
+### What the fifth pass measured
+
+Numbers rather than reasoning, because section 6 of the previous pass said these
+had only ever been argued about.
+
+**Sign in does not answer faster for an address nobody holds.** 250 wrong
+passwords against 250 real accounts, and 250 against addresses nobody holds,
+each with a distinct forwarded address so neither rate limit fired and every
+answer was the 401 from the verify path. Medians 18.9 ms and 20.5 ms, the
+unknown address the slower of the two, and the distributions overlap almost
+entirely. The dummy Argon2 verify in `verifyPassword` does what it claims.
+
+The first attempt at this measurement was wrong and said the gap was 21 ms. It
+held the address constant, so the per-address rate limit answered 429 without
+hashing anything and it was timing the refusal. Worth saying because the wrong
+number was the alarming one.
+
+**`POST /api/forgot` leaks about 1.5 ms** for an address that exists, which is
+the extra token write. The distributions overlap, and the per-IP limit caps
+anybody at ten addresses per quarter of an hour, so it is a signal that cannot
+be collected often enough to be a membership oracle.
+
+**A service token id that exists answers 26 ms slower** than one that does not,
+because a miss never reaches the Argon2 verify. The comment in `auth.ts` already
+says the id is a guessable name rather than a secret, and the measurement agrees
+with it. Not a defect, now measured.
+
+**An hour of two door services against one API, sampled every minute.** A card
+at each reader every twenty seconds and a command every minute, which is a
+busier building than the lab is. What a leak would show up in is the floor of
+resident memory per window, because that approximates the live set after a
+collection where an average only shows the sawtooth.
+
+| Window | door alpha | door beta | api | simulator |
+| --- | --- | --- | --- | --- |
+| 0 to 9 min | 91.4 MB | 94.6 MB | 100.4 MB | 92.0 MB |
+| 10 to 19 | 94.7 | 98.0 | 105.0 | 94.2 |
+| 20 to 29 | 99.3 | 102.6 | 107.6 | 89.6 |
+| 30 to 39 | 96.4 | 100.0 | 108.7 | 89.8 |
+| 40 to 49 | 96.4 | 100.1 | 108.7 | 90.6 |
+| 50 to 59 | 96.4 | 100.0 | 109.5 | 90.7 |
+
+Both door services and the simulator warm up over the first half hour and then
+stop dead: the last three windows are the same number. The API's floor is still
+moving by under a megabyte across the last twenty minutes, which is not
+separable from heap sizing at a one minute sample and is the one reading here
+that would want a longer soak to call flat with confidence. It is nowhere near
+the 512 MB the container is limited to.
+
+Postgres connections were two or three for the whole hour, so nothing churns
+them. `door_placements` did not move. `door_events` grew at exactly the rate
+cards were presented and commands were run, 7.0 a minute against 7 events a
+minute of load, so nothing writes a row per poll. That last one is the property
+the schema was shaped around: the legacy system wrote a status snapshot on every
+poll and reached 2.8 million of them.
+
 ### What was proved not to be a defect
 
 Each of these was about to be changed on a wrong belief. They are recorded so
@@ -333,30 +470,48 @@ nobody spends the time again.
 - **Node's test runner reads `.ts` directly** on 24.20, and `make typecheck`
   catches what the suite cannot: type stripping does not type check, and a
   green suite on this stack is not a typecheck.
+- **A suspended member's card keeps its placement, and that is load bearing.**
+  Run against two controllers: suspending a member clears their card off both
+  boards, the placement rows survive, and putting the member back writes the
+  card to the same EEPROM slot it had. The slot is an address, keeping it stable
+  is the point, and a sweep that removed placements for every card not currently
+  on a board would take that away. `GET /api/credentials` reports such a card as
+  placed while it is off the boards, which is the price and is worth knowing
+  before somebody tidies it.
+- **`/space_api.json` is right with two controllers reporting.** It takes the
+  newest reading per door across all of them, so a controller that has died does
+  not hold the sign open on a stale unlocked reading, and a live one is not
+  outvoted by a dead one.
+- **Commands are routed per controller correctly.** Two controllers, two
+  simulated boards: each ran only what was queued for it, and a stale controller
+  refusing a command does not stop the other one taking one.
 
 ### What has not been audited
 
-The honest list, and the best place for a fifth pass to start.
+The honest list, and the best place for a sixth pass to start.
 
 - **Nothing has ever spoken to the real controller.** Section 3.
 - **The import has never run against the real dump**, only against the invented
-  fixture in `scripts/legacy-fixture.sql`.
-- **Two controllers have never run side by side.** Section 5.7 of the
-  specification is the case the whole placement design exists to pass, and it
-  has never been exercised, even though two simulators and two controller ids
-  would do it on a laptop.
-- **Nothing has run for longer than a few minutes.** No soak, no evidence about
-  leaks, connection churn or table bloat over time.
-- **No load or concurrency work** beyond one test of two requests racing on a
-  unique index.
-- **Timing side channels were reasoned about on the sign in path and never
-  measured**, on any path.
+  fixture in `scripts/legacy-fixture.sql`. This is now the largest thing on the
+  branch that has only ever met invented data.
 - **`/space_api.json` has never been compared byte for byte with production.**
-- **The Caddyfile headers have not been checked against a current baseline**,
-  and the base images are pinned by tag rather than by digest, and unscanned.
 - **No screen exists**, so nothing has exercised the cookie across subdomains,
   a reset link in a real mail client, or any of the flows end to end as a
   person.
+- **No load work.** The fifth pass did concurrency, which is a different thing:
+  it raced the claims and the writes that can race, and never asked what happens
+  at a thousand members signing in. The directory returns every member in one
+  answer by design and nobody has measured that answer at the size the lab
+  actually is.
+- **The images are pinned and still unscanned.** Pinning says the image will not
+  move. It says nothing about what is in it, and no scanner runs anywhere.
+- **Nothing measures the door loop against a slow controller.** The simulator
+  answers instantly. A real 2013 board blocks for six seconds on an arm and one
+  second on a card miss, which is written down in `docs/legacy-system.md` and has
+  never been put in front of the loop to see what a tick does when it overruns.
+- **Nobody has read the two scripts adversarially since pass three.**
+  `scripts/import.ts` is 416 lines, it runs once, and it runs against the thing
+  nobody has seen.
 
 ## 7. Open licence questions
 
@@ -392,10 +547,12 @@ versions will not load it. The suites need the Postgres that `make up` starts.
 `make typecheck` is not optional: stripping types is not checking them, so a
 green suite on this stack says nothing about the types.
 
-Four passes have been over this code and section 6 says what they covered. The
+Five passes have been over this code and section 6 says what they covered. The
 bar for a new finding is not that it looks wrong, it is that you ran it and it
-was. Three things in section 6 were about to be changed on a wrong belief and
-only a probe caught it.
+was. Seven things in section 6 were about to be changed on a wrong belief and
+only a probe caught it. One of the fifth pass's own measurements was wrong the
+first time and the wrong number was the frightening one, which is the argument
+for running it twice.
 
 The two things that must not break are in section 13 of `CONTRIBUTING.md`. A
 verified restorable backup, and the door keeping working when everything here is

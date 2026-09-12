@@ -82,11 +82,15 @@ export const placements: Handler<Env> = async (c) => {
       if (cardId === null || record.placement === undefined) continue
       // Skipped rather than refused, so one stale id out of sixty four does not
       // roll back the placements for the rest of the pass.
+      //
+      // `active`, not merely present: a pass that read the card list before a
+      // revoke reports where it put that card after it, and without this the
+      // row the revoke removed comes straight back and nothing removes it again.
       await tx`
         insert into door_placements (controller_id, credential_id, placement)
         select ${controller}, ${cardId}::uuid,
                ${sql.json(record.placement as postgres.JSONValue)}
-        where exists (select 1 from credentials where id = ${cardId}::uuid)
+        where exists (select 1 from credentials where id = ${cardId}::uuid and active)
         on conflict (controller_id, credential_id)
         do update set placement = excluded.placement, written_at = now()`
     }

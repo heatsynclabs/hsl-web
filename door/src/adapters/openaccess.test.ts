@@ -351,3 +351,55 @@ describe('defects found in audit', () => {
     assert.equal(second.placements.length, 0)
   })
 })
+
+/**
+ * The board's event log holds sixteen bit values and a card id is thirty two,
+ * so addToLog splits one across two entries. A card id big enough that the
+ * high half does not fit comes back as a different card or not at all, and
+ * until this pass the simulator stored the halves whole and hid it.
+ */
+describe('the fifth audit, on what the event log can carry', () => {
+  test('a card the log cannot carry is written, opens the door, and says so', async () => {
+    const { device, door } = adapter()
+
+    // 0xDEADBEEF splits to a high half of 114014, which is not a sixteen bit
+    // value. The longest card id in the legacy dump is seven characters, so
+    // nothing the lab holds today reaches this.
+    const result = await door.uploadCards([card('a', 'DEADBEEF')])
+
+    assert.equal(result.placements.length, 1, 'the card was withheld rather than written')
+    assert.deepEqual(result.removed, [])
+    assert.equal(device.cards.get(0)?.tag, 'DEADBEEF')
+
+    const reasons = result.faults.map((event) => event.detail?.reason as string)
+    assert.equal(reasons.length, 1)
+    assert.match(reasons[0] as string, /event log can carry back/)
+    assert.match(reasons[0] as string, /opens the door/)
+  })
+
+  test('a card the log cannot carry does not come back from the reader as itself', async () => {
+    const { device, door } = adapter()
+    await door.uploadCards([card('a', 'DEADBEEF')])
+
+    device.present('DEADBEEF')
+    const events = await door.drainEvents()
+
+    // Either the board dropped the half it could not store, or it kept
+    // something else. What it must not do is answer 'DEADBEEF', because that
+    // would mean the simulator is carrying a value the hardware cannot.
+    assert.notEqual(events[0]?.token, 'DEADBEEF')
+  })
+
+  test('the largest id the log can carry still comes back exactly', async () => {
+    const { device, door } = adapter()
+    await door.uploadCards([card('a', '3FFF7FFF')])
+
+    device.present('3FFF7FFF')
+    const events = await door.drainEvents()
+
+    assert.deepEqual(
+      events.map((event) => [event.kind, event.token]),
+      [['denied', '3FFF7FFF']],
+    )
+  })
+})

@@ -120,7 +120,9 @@ describe('the door', () => {
     assert.equal(cards[0]?.placement, null)
   })
 
-  test('revoking a card takes its placement with it', async () => {
+  // Deleting the credential outright, which is the foreign key rather than the
+  // revoke route. What revoking does is in the fifth audit block below.
+  test('deleting a credential outright takes its placement with it', async () => {
     const bearer = await makeServiceToken()
     const admin = await makeMember({ roles: ['admin'] })
     const holder = await makeMember({ doorAccess: true })
@@ -468,5 +470,172 @@ describe('the second audit, on the service boundary', () => {
       const answer = await call(app, '/door/commands', { bearer, controller: CONTROLLER })
       assert.equal(answer.status, 200, `tick ${tick} was refused`)
     }
+  })
+})
+
+/**
+ * Section 5.7 runs the old controller and the new one side by side for a week.
+ * Two simulators and two controller ids exercise it on a laptop, and until this
+ * pass nobody had.
+ */
+describe('the fifth audit, with two controllers reporting', () => {
+  beforeEach(reset)
+
+  async function reportedBy(controller: string, ago = 0): Promise<void> {
+    const at = new Date(Date.now() - ago * 1000).toISOString()
+    for (const door of ['front', 'rear']) {
+      await sql`
+        insert into door_state (controller_id, door, state, capabilities, reported_at)
+        values (${controller}, ${door}, 'locked', ${['open', 'lock', 'unlock', 'alarm']}, ${at})`
+    }
+  }
+
+  /** A card on two controllers, as the week of running both would leave it. */
+  async function cardOnBothControllers(): Promise<{ cookie: string; cardId: string }> {
+    const bearer = await makeServiceToken()
+    const admin = await makeMember({ roles: ['admin'] })
+    const holder = await makeMember({ doorAccess: true })
+    const cookie = await signIn(app, admin.email)
+
+    const issued = (await (
+      await call(app, '/api/credentials', {
+        method: 'POST',
+        cookie,
+        body: { token: '0004B1C7', memberId: holder.id },
+      })
+    ).json()) as { id: string }
+
+    for (const controller of ['old-board', 'new-board']) {
+      await call(app, '/door/placements', {
+        method: 'POST',
+        bearer,
+        controller,
+        body: { placements: [{ cardId: issued.id, placement: { slot: 37, mask: 1, tag: '0004B1C7' } }] },
+      })
+    }
+    assert.equal((await sql`select credential_id from door_placements`).length, 2)
+    return { cookie, cardId: issued.id }
+  }
+
+  test('revoking a card clears its placement on every controller', async () => {
+    const { cookie, cardId } = await cardOnBothControllers()
+
+    const answer = await call(app, `/api/credentials/${cardId}`, { method: 'DELETE', cookie })
+    assert.equal(answer.status, 204)
+
+    assert.equal(
+      (await sql`select controller_id from door_placements`).length,
+      0,
+      'a revoked card kept a placement, so the admin list still reports it on both boards',
+    )
+  })
+
+  test('a revoked card is not reported as still sitting on a controller', async () => {
+    const { cookie, cardId } = await cardOnBothControllers()
+    await call(app, `/api/credentials/${cardId}`, { method: 'DELETE', cookie })
+
+    const cards = (await (await call(app, '/api/credentials', { cookie })).json()) as Array<{
+      token: string
+      active: boolean
+      placedOn: string[]
+    }>
+    assert.equal(cards[0]?.active, false)
+    assert.deepEqual(cards[0]?.placedOn, [])
+  })
+
+  test('a pass still in flight cannot put a revoked card back', async () => {
+    const bearer = await makeServiceToken('door-old', ['door'])
+    const { cookie, cardId } = await cardOnBothControllers()
+    await call(app, `/api/credentials/${cardId}`, { method: 'DELETE', cookie })
+
+    // The pass read the card list before the revoke and reports where it put
+    // the card after it. Without a check on this side the row comes back and
+    // nothing ever removes it again.
+    const answer = await call(app, '/door/placements', {
+      method: 'POST',
+      bearer,
+      controller: 'old-board',
+      body: { placements: [{ cardId, placement: { slot: 37, mask: 1, tag: '0004B1C7' } }] },
+    })
+    assert.equal(answer.status, 200)
+    assert.equal((await sql`select controller_id from door_placements`).length, 0)
+  })
+
+  test('a command with two controllers reporting asks which one, rather than reading as a down link', async () => {
+    const opener = await makeMember({ doorAccess: true })
+    const cookie = await signIn(app, opener.email)
+    await reportedBy('old-board')
+    await reportedBy('new-board')
+
+    const answer = await call(app, '/api/door/command', {
+      method: 'POST',
+      cookie,
+      body: { action: 'open', door: 'front' },
+    })
+
+    // 503 is what this API says when the database or the lab link is down.
+    // Spending it on a caller who has not said which controller buries that.
+    assert.equal(answer.status, 400)
+    const { error } = (await answer.json()) as { error: string }
+    assert.match(error, /old-board/)
+    assert.match(error, /new-board/)
+    assert.equal((await sql`select id from door_commands`).length, 0)
+  })
+
+  test('naming a controller that is not there says so, and names the ones that are', async () => {
+    const opener = await makeMember({ doorAccess: true })
+    const cookie = await signIn(app, opener.email)
+    await reportedBy('old-board')
+
+    const answer = await call(app, '/api/door/command', {
+      method: 'POST',
+      cookie,
+      body: { action: 'open', door: 'front', controllerId: 'typo-board' },
+    })
+
+    assert.equal(answer.status, 404)
+    const { error } = (await answer.json()) as { error: string }
+    assert.match(error, /typo-board/)
+    assert.match(error, /old-board/)
+  })
+
+  test('a controller that has never reported is still a link that is down', async () => {
+    const opener = await makeMember({ doorAccess: true })
+    const cookie = await signIn(app, opener.email)
+
+    const answer = await call(app, '/api/door/command', {
+      method: 'POST',
+      cookie,
+      body: { action: 'open', door: 'front' },
+    })
+    assert.equal(answer.status, 503)
+  })
+
+  test('each controller is commanded on its own, and one going stale does not stop the other', async () => {
+    const opener = await makeMember({ doorAccess: true })
+    const cookie = await signIn(app, opener.email)
+    await reportedBy('old-board', 3600)
+    await reportedBy('new-board')
+
+    const stale = await call(app, '/api/door/command', {
+      method: 'POST',
+      cookie,
+      body: { action: 'open', door: 'front', controllerId: 'old-board' },
+    })
+    assert.equal(stale.status, 503)
+
+    const live = await call(app, '/api/door/command', {
+      method: 'POST',
+      cookie,
+      body: { action: 'open', door: 'front', controllerId: 'new-board' },
+    })
+    assert.equal(live.status, 202)
+
+    const queued = await sql<Array<{ controllerId: string }>>`
+      select controller_id from door_commands`
+    assert.deepEqual(
+      queued.map((row) => row.controllerId),
+      ['new-board'],
+    )
   })
 })

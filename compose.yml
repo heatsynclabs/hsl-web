@@ -1,11 +1,15 @@
 # The public host. Three containers, one volume that matters.
 #
+# Base images are pinned by digest, read on 2026-09-12, so a redeploy brings up
+# the image that was tested rather than whatever the tag moved to. Moving one is
+# editing the digest here, which is the point.
+#
 # Every container has a memory and PID limit: one runaway process should not
 # take the host down and the door status with it.
 
 services:
   db:
-    image: postgres:17
+    image: postgres:17@sha256:67f41722b7a8cbdb868a44a4995c846eddfdc2973bccb291ce937dce88ad5675
     restart: unless-stopped
     environment:
       POSTGRES_DB: hsl
@@ -59,7 +63,7 @@ services:
   # Not started on a laptop: `docker compose --profile public up -d` is the
   # public host, and `make up` is everything else.
   caddy:
-    image: caddy:2
+    image: caddy:2@sha256:13ba145cba2f3e28fa801994876e4c086d1b95d5aa2a520a734765ffb6b12017
     restart: unless-stopped
     profiles: [public]
     ports: ["80:80", "443:443"]

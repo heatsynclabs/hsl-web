@@ -38,12 +38,23 @@ const EMPTY_MASK = 255
 /** `const int divisor = 32767;`, line 266. */
 const DIVISOR = 32767
 
+/**
+ * How many queries to remember.
+ *
+ * The tests read this to count what one pass sent, and a pass sends at most a
+ * few hundred, so the oldest going costs them nothing. Unbounded it is about
+ * 105 bytes a request, measured at 11 MB per hundred thousand, which is nine
+ * days of a simulator at the tick rate and the week that section 5.7 asks for.
+ */
+const REMEMBERED_REQUESTS = 1000
+
 export interface FakeDevice {
   /** Hand this to createOpenAccess to drive the fake through the real codec. */
   transport: Transport
   handle(query: string): string
   /** Holding a card to the reader. There is no such command on real hardware. */
   present(tag: string, outcome?: 'granted' | 'denied' | 'read'): void
+  /** What has been sent, newest last, back to REMEMBERED_REQUESTS. */
   requests: string[]
   cards: Map<number, Placement>
   privileged: boolean
@@ -70,10 +81,19 @@ export function createFakeDevice(options: FakeDeviceOptions): FakeDevice {
   const logData: number[] = Array.from({ length: LOG_SLOTS }, () => 0)
   let cursor = 0
 
-  /** addToLog, lines 1606 to 1613. A ring over the forty slots. */
+  /**
+   * addToLog, lines 1606 to 1613. A ring over the forty slots.
+   *
+   * Stored through sixteen bits, because the board's entries are that wide. An
+   * unbounded store here round trips card ids the hardware cannot carry, and
+   * proving a round trip the board cannot do is the one thing a simulator that
+   * answers the real bytes exists to prevent. See LOG_TAG_CEILING.
+   */
+  const sixteenBit = new Int16Array(1)
   const addToLog = (key: string, value: number): void => {
     logKeys[cursor] = key
-    logData[cursor] = value
+    sixteenBit[0] = value
+    logData[cursor] = sixteenBit[0] as number
     cursor = (cursor + 1) % LOG_SLOTS
   }
 
@@ -125,6 +145,7 @@ function println(lines: string[]): string {
  */
 function handle(device: FakeDevice, password: string, query: string, log: Log): string {
   device.requests.push(query)
+  if (device.requests.length > REMEMBERED_REQUESTS) device.requests.shift()
   const out: string[] = []
 
   // Login runs before the switch, lines 344 to 355.

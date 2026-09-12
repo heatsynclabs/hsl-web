@@ -61,6 +61,28 @@ const EMPTY_TAGS = new Set(['FFFFFFFF', '00000000'])
 const LOG_DIVISOR = 32767
 
 /**
+ * The largest card id the board's event log can carry back.
+ *
+ * addToLog splits a 32 bit tag across two 16 bit entries as `LongInfo % divisor`
+ * and `LongInfo / divisor`, so the high half has to fit in 16 bits. At
+ * 0x3FFF7FFF it is exactly 32767. Past that the board stores something else and
+ * the read comes back naming a different card, or is dropped.
+ *
+ * ASSUMPTION: the log holds signed 16 bit values, which is the reading parseLog
+ * already works from when it drops a negative half. Unsigned would put the
+ * ceiling at 0x7FFFFFFF, and a tag between the two would come back as a wrong
+ * but entirely plausible card id rather than being dropped. The lower of the
+ * two is used, so the fault is raised whichever it turns out to be.
+ * CONFIRM BY: the declaration behind logData in
+ * Open_Access_Control_Ethernet.ino, near line 266, on the board the lab runs.
+ * BLAST RADIUS: a card above the ceiling opens the door, because checkUser
+ * compares the full 32 bits, and every entry it makes names the wrong card or
+ * no card. No card in the legacy dump reaches it: the longest is seven hex
+ * characters and this is eight.
+ */
+const LOG_TAG_CEILING = 0x3fff7fff
+
+/**
  * How long to wait for the board on one request.
  *
  * Longer than the slowest honest answer and shorter than a tick. Arming calls
@@ -294,6 +316,22 @@ export function slotRefusal(slot: number): string | null {
   return null
 }
 
+/**
+ * Whether this card's reads will come back naming it.
+ *
+ * Reported rather than refused. The card is written and it opens the door, so
+ * withholding it would take away access that works to avoid a logging fault.
+ */
+function logCeilingFault(cardId: string, tag: string): DoorEvent | null {
+  if (Number.parseInt(tag, 16) <= LOG_TAG_CEILING) return null
+  return fault(
+    `card ${tag} is above ${LOG_TAG_CEILING.toString(16).toUpperCase()}, which is the largest id ` +
+      "this board's event log can carry back, so it was written and it opens the door, and every " +
+      'entry it makes will name a different card or none. Issue a card with a shorter id.',
+    { cardId, tag },
+  )
+}
+
 function firstFreeSlot(taken: ReadonlySet<number>): number | null {
   for (let slot = 0; slot <= LAST_USABLE_SLOT; slot += 1) if (!taken.has(slot)) return slot
   return null
@@ -347,6 +385,9 @@ export function planUpload(cards: readonly Card[], held: readonly Placement[]): 
       rejected.push(card.id)
       continue
     }
+
+    const carried = logCeilingFault(card.id, tag)
+    if (carried !== null) faults.push(carried)
 
     const placement = isPlacement(card.placement) ? card.placement : null
     const refusal = placement === null ? null : slotRefusal(placement.slot)

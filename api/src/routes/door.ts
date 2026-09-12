@@ -92,7 +92,7 @@ export const command: Handler<Env> = async (c) => {
   }
 
   const controller = await controllerFor(text(form.controllerId, 64))
-  if (typeof controller === 'string') return c.json({ error: controller }, 503)
+  if ('error' in controller) return c.json({ error: controller.error }, controller.status)
 
   const refusal = refusalFor(controller, action, door)
   if (refusal !== null) {
@@ -161,27 +161,54 @@ function paged(rows: readonly unknown[], limit: number): { items: unknown[]; nex
   return { items, next: rows.length > limit ? (items.at(-1)?.id ?? null) : null }
 }
 
-/** The controller to send to: the one named, or the only one there is. */
-async function controllerFor(named: string | null): Promise<StateRow | string> {
+/** Why nothing was queued, and the status that says whose problem it is. */
+interface Refusal {
+  status: 400 | 404 | 503
+  error: string
+}
+
+/**
+ * The controller to send to: the one named, or the only one there is.
+ *
+ * Three answers rather than one, because 503 here means the database or the
+ * link to the lab is down and somebody reading the log needs it to keep meaning
+ * that. A caller who has not said which of two controllers they mean, or who
+ * named one that is not there, has made a mistake that is theirs to fix.
+ *
+ * Both of those only happen once a second controller is reporting, which is
+ * section 5.7 of the specification and the reason this takes a name at all.
+ */
+async function controllerFor(named: string | null): Promise<StateRow | Refusal> {
   const rows = await sql<StateRow[]>`
     select distinct on (controller_id) controller_id, door, state, capabilities, reported_at
-    from door_state
-    ${named === null ? sql`` : sql`where controller_id = ${named}`}
-    order by controller_id, reported_at desc`
+    from door_state order by controller_id, reported_at desc`
 
-  const only = rows[0]
+  const reporting = rows.map((row) => row.controllerId).join(', ')
+  const matching = named === null ? rows : rows.filter((row) => row.controllerId === named)
+  const only = matching[0]
+
   if (only === undefined) {
-    return 'No controller has reported to this API, so there is nothing to send a command to.'
+    return rows.length === 0
+      ? {
+          status: 503,
+          error: 'No controller has reported to this API, so there is nothing to send a command to.',
+        }
+      : {
+          status: 404,
+          error: `There is no controller called ${named}. The ones reporting are ${reporting}.`,
+        }
   }
-  if (rows.length > 1) {
-    return `More than one controller is reporting. Name one of ${rows.map((r) => r.controllerId).join(', ')}.`
+  if (matching.length > 1) {
+    return { status: 400, error: `More than one controller is reporting. Name one of ${reporting}.` }
   }
   if (isStale(only.reportedAt)) {
-    return (
-      `The ${only.controllerId} controller last reported ` +
-      `${Math.round((Date.now() - only.reportedAt.getTime()) / 1000)} seconds ago, so the link to ` +
-      'the lab is down. Cards still open the door. Nothing was queued.'
-    )
+    return {
+      status: 503,
+      error:
+        `The ${only.controllerId} controller last reported ` +
+        `${Math.round((Date.now() - only.reportedAt.getTime()) / 1000)} seconds ago, so the link to ` +
+        'the lab is down. Cards still open the door. Nothing was queued.',
+    }
   }
   return only
 }

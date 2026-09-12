@@ -60,9 +60,15 @@ export const issue: Handler<Env> = async (c) => {
 }
 
 /**
- * Never hard deleted. door_events references the card id and the history has to
- * stay readable. Clearing active drops the card from the list the controller is
- * told to hold, and the placement goes with it by cascade on the next pass.
+ * Never hard deleted. The card id is unique across every card this system has
+ * ever issued, and door events carry it, so the row stays and `active` goes
+ * false.
+ *
+ * The placement goes in the same transaction. The cascade on door_placements
+ * fires on a delete of the credential and this is an update, so nothing else
+ * removes it: a revoked card kept a row on every controller forever, and the
+ * card list above went on reporting it as sitting on the board after the door
+ * service had cleared the slot.
  */
 export const revoke: Handler<Env> = async (c) => {
   const actor = c.get('member')
@@ -75,9 +81,10 @@ export const revoke: Handler<Env> = async (c) => {
   const [held] = await sql`select id from credentials where id = ${id} and active`
   if (held === undefined) return missing(c, 'An active card with that id')
 
-  await change({ actor: actor.id, action: 'credential.revoke', target: id }, (tx) =>
-    tx`update credentials set active = false where id = ${id}`,
-  )
+  await change({ actor: actor.id, action: 'credential.revoke', target: id }, async (tx) => {
+    await tx`update credentials set active = false where id = ${id}`
+    await tx`delete from door_placements where credential_id = ${id}`
+  })
 
   log({ evt: 'credential_revoked', credential: id, by: actor.id })
   return c.body(null, 204)

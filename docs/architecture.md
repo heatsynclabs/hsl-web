@@ -194,10 +194,14 @@ deliberately not the value transform, because the shipped `postgres.camel` also
 rewrites the keys inside every jsonb value, and renaming a placement's keys
 would be reading it.
 
-The `on delete cascade` on `door_placements` is load bearing. Revoke a
-credential, the placement goes with it, and the next pass sees a card on the
-device that nothing claims and clears it. That is the revoke-then-restart bug
-solved by a foreign key.
+A placement is removed in two ways, and between them they cover the
+revoke-then-restart bug: the next pass sees a card on the device that nothing
+claims and clears it.
+
+`DELETE /api/credentials/:id` clears the rows in the same transaction as the
+revoke. It has to, because a revoke sets `active` false rather than deleting the
+row, and the `on delete cascade` does not fire on an update. That cascade covers
+the other case, a credential deleted outright, which no route does today.
 
 ## The card list version
 

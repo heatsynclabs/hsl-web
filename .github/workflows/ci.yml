@@ -10,7 +10,8 @@ jobs:
 
     services:
       db:
-        image: postgres:17
+        # Pinned the same way compose.yml is. See the note there.
+        image: postgres:17@sha256:67f41722b7a8cbdb868a44a4995c846eddfdc2973bccb291ce937dce88ad5675
         env:
           POSTGRES_DB: hsl
           POSTGRES_USER: hsl

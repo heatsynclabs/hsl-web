@@ -223,9 +223,11 @@ create index door_commands_open_idx on door_commands (controller_id)
 -- here. No query filters on it, no index touches its keys, no response renders
 -- it as anything but opaque JSON.
 --
--- The cascade is load bearing. Revoke a credential, the placement goes with it,
--- and the next pass sees a card on the device that nothing claims and clears
--- it. That is the revoke-then-restart bug solved by a foreign key.
+-- Two things remove a placement, and between them they cover the revoke-then-
+-- restart bug. Revoking a card clears its rows in the same transaction, because
+-- a revoke is an update and the cascade below does not fire on one. The cascade
+-- covers a credential that is deleted outright, which no route does today and
+-- an import correction might.
 create table door_placements (
   controller_id text not null,
   credential_id uuid not null references credentials(id) on delete cascade,
