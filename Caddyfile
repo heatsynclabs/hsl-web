@@ -1,0 +1,25 @@
+# No global options block. Caddy issues and renews certificates without an ACME
+# account email, and an `email` directive that resolves to an empty string stops
+# the whole server from parsing its config.
+
+{$HSL_DOMAIN} {
+	# Caddy writes no access log unless it is asked to. Cookie and Authorization
+	# come out as REDACTED by default.
+	log
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy same-origin
+		# Backing this out on the real hostname means waiting out the max-age, so
+		# it is a year rather than anything longer, and no preload.
+		Strict-Transport-Security "max-age=31536000"
+	}
+
+	# Nothing here accepts an upload. The largest honest request is a profile
+	# with two 2,000 character text fields.
+	request_body {
+		max_size 1MB
+	}
+
+	reverse_proxy api:3000
+}

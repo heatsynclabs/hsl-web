@@ -1,0 +1,27 @@
+{
+  "name": "hsl-api",
+  "version": "3.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/index.ts",
+    "test": "node --test --test-concurrency=1 \"src/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hono/node-server": "2.1.1",
+    "@node-rs/argon2": "2.2.1",
+    "bcryptjs": "3.0.3",
+    "hono": "4.13.7",
+    "jose": "6.2.12",
+    "nodemailer": "10.0.8",
+    "postgres": "3.4.9"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.4",
+    "typescript": "7.0.2"
+  }
+}

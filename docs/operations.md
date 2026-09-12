@@ -1,312 +1,144 @@
 # Operations
 
-Everything runs under Docker Compose. Nothing here assumes a particular hosting
-provider.
+## The two hosts
 
-Two hosts. The public host runs Postgres, the API and Caddy. The lab host runs
-the door service, on the LAN with the controller, and opens no inbound port.
+The public host runs `compose.yml`: Postgres 17, the API, and Caddy for TLS. The
+lab host runs `compose.lab.yml`: the door service and nothing else. They never
+connect the other way round.
 
-## Before the first deploy
+Every container has a memory and PID limit, and a log with a size cap. One
+runaway process should not take the host down and the door status with it.
 
-The current members server, `hsl-web`, is 32 bit CentOS 6.8 on kernel 2.6.32 and
-cannot run Docker. A machine has to be chosen and somebody has to own it. That is
-a custody decision rather than a technical one, and it blocks deployment but not
-development.
+### The public host
 
-## The public host
-
-You need a machine with Docker, a DNS name already pointing at it, and ports 80
-and 443 reachable. Caddy asks Let's Encrypt for a certificate on first start, so
-the name has to resolve before you begin or the first request answers with a TLS
-error and nothing says why.
-
-```
-git clone https://github.com/heatsynclabs/hsl-web
-cd hsl-web
-cp .env.example .env
+```sh
+git pull
+docker compose pull
+docker compose run --rm api node scripts/migrate.ts
+docker compose up -d
 ```
 
-Now edit `.env`, before anything is started. For a real deployment:
+Migrations run before the new API starts, and they are forward only, so each one
+has to leave the previous version of the code working: add a column one release
+before anything uses it, drop it one release after. Rollback is redeploying the
+previous tag.
 
-```
-HSL_PUBLIC_ORIGIN=https://members.heatsynclabs.org
-HSL_DOMAIN=members.heatsynclabs.org
-HSL_SCHEME=https
-HSL_HTTP_PORT=80
-HSL_HTTPS_PORT=443
-```
+### The lab host
 
-and delete the `COMPOSE_PROFILES=dev` line, which starts the development mail
-catcher. `HSL_PUBLIC_ORIGIN` has to be the exact URL a browser types, port and
-all: the session cookie is checked against it, and a mismatch refuses every sign
-in. When that happens the API logs `Invalid origin: <what was sent>` beside the
-value it expected, so `docker compose logs api` is the place to look.
-
-Then the secrets:
-
-```
-make secrets                # writes secrets/, never overwrites an existing file
+```sh
+docker compose -f compose.lab.yml pull
+docker compose -f compose.lab.yml up -d
 ```
 
-That writes four files and leaves the directory at 0700 with the files at 0644.
-The modes are deliberate: Compose mounts a file secret as a plain bind mount and
-ignores `uid`, `gid` and `mode`, and the service images run as the `node` user,
-uid 1000. A 0600 file owned by the deploying user is unreadable inside the
-container, and the deploy dies with `EACCES` on a secret. The private directory
-is what keeps other host users out.
+It pulls on its own schedule, because it is on a different network and should
+not be reachable from CI.
 
-One of the four is a placeholder. Replace it:
+Five variables and no volume. Reimage the machine, give it those five, and it is
+back. `docs/runbooks/run-the-door-service.md` is the whole sequence including
+minting the service token.
 
-```
-printf '%s' 'smtps://user:password@smtp.example.org:465' > secrets/smtp_url
-```
+## Environment
 
-`make secrets` writes `smtp://mail:1025`, the development mail catcher, and the
-API refuses to start on an https origin while that value is still there. It says
-so by name. Password reset is the only way in for the 31 imported members who
-have never had a password, so a deployment that cannot send mail is a deployment
-that locks people out silently.
+`api/src/config.ts` is the complete list of what the API reads, with each
+default and each refusal beside it. `.env.example` is the same list as a file to
+copy. Two refusals are worth knowing before a deploy:
 
-```
-make up
-```
+- No `DATABASE_URL` and the API does not start.
+- `ISSUER` on https and no `SMTP_URL`, `SIGNING_KEY` or `SIGNING_KEY_PUBLIC`,
+  and the API does not start. A deployment that cannot send mail cannot reset a
+  password, and a member locked out has no other way in.
 
-`make up` builds the images, runs the migrations as their own step, and only
-then starts the stack. The migration runs first on purpose: `docker compose up`
-recreates the api and web containers before it runs migrate, so a migration that
-fails would take the running site down and leave nothing to fall back on.
-
-## The first admin
-
-A fresh install has nobody who can reach the admin portal, and every route that
-could grant admin already needs one. There is one door in from outside the
-application and it needs a shell on the host.
-
-If you are importing the old members database, do that first: the import refuses
-to write into a database that already holds members, so a signup made before the
-import blocks it. See `docs/runbooks/import-the-members-database.md`. Then:
-
-```
-make admin EMAIL=someone@heatsynclabs.org
-```
-
-with the address of a member the import carried.
-
-On a lab with no old database, somebody signs up at `https://<domain>/signup`
-first, choosing their own password, and then you run the same command with their
-address. `make admin` refuses to create a member: an account has to belong to
-the person who set its password.
-
-## Proving the deploy worked
-
-Four checks, in this order. Each one fails differently, so a failure tells you
-where to look.
-
-```
-docker compose ps
-```
-
-Expected: `db` healthy, `api` healthy, `web` running, `migrate` exited 0. No
-`mail`.
-
-```
-curl -sS https://<domain>/space_api.json
-```
-
-Expected: a JSON document with `open` and `status` keys. This is the URL the lab
-website and the ESP8266 status LED read, so it answering is the contract with
-things outside this repository. A TLS error here means DNS or the certificate; a
-502 means the API is not up.
-
-Sign in through the browser as the admin from the step above. That proves the
-cookie, the origin and the database together, which is what nothing else proves.
-
-Ask for a password reset for an address you control, and read the mail. Nothing
-else tells you the SMTP URL is right, and the guard at boot only proves it is not
-the placeholder.
-
-## The lab host
-
-```
-cd infra/door
-cp .env.example .env        # CONTROLLER_URL and API_URL
-mkdir -p secrets && chmod 700 secrets
-printf '%s' '<the controller password>' > secrets/controller_password
-printf '%s' '<the door token from the public host>' > secrets/door_token
-chmod 644 secrets/*
-docker compose up -d --build
-```
-
-The door token is the same value as `secrets/door_token` on the public host. It
-is the only credential the two hosts share. The modes match the public host and
-for the same reason: the container reads these as uid 1000, and the private
-directory is what keeps other host users out.
-
-The controller password is the four hex characters the board reads after `e=`,
-not the C literal from the sketch. `PRIVPASSWORD` is declared as `0x1234`, and
-the value to write here is `1234`. The service refuses to start on anything
-else and says so.
-
-## Development
-
-The reverse proxy does not run on a laptop, which removes the whole local TLS
-problem.
-
-```
-cp .env.example .env
-echo 'COMPOSE_FILE=compose.yaml:compose.dev.yaml' >> .env
-make secrets
-docker compose up -d db api mail
-pnpm dev
-```
-
-Postgres is on `127.0.0.1:5432`, the API on `127.0.0.1:3000`, the mail catcher's
-inbox on `127.0.0.1:8026`, and Vite serves each app with its own proxy pointing
-`/api` at the API.
-
-To run the built apps behind Caddy instead, which is what production does, leave
-`COMPOSE_FILE` out and use `make up`. `README.md` covers that path and the seed
-data that goes with it.
-
-The override file is named `compose.dev.yaml` rather than
-`compose.override.yaml` on purpose. An override file merges automatically, so a
-production host with the repository checked out would silently pick up
-development settings.
+`make keys` prints an RSA pair. All secrets live in repository secrets and reach
+the host as environment variables. No config file on a server holds a
+credential.
 
 ## Backups
 
-```
-make backup                       # writes a dump and a roles file
-./tools/restore.sh <dump file>    # restores into a throwaway copy and counts rows
-```
+Nightly `pg_dump` to object storage off the host it protects, thirty daily and
+twelve monthly retained. `scripts/backup.sh` does the dump and the pruning and
+copies the result to `BACKUP_DESTINATION` if one is set. Without that variable
+the dumps stay on the host they protect, and the script says so rather than
+implying otherwise.
 
-`tools/restore.sh` checks a dump. It never writes over the live database, which
-is deliberate. Putting a database back is in `docs/runbooks/go-back.md`, as
-commands somebody types rather than a script they can run by accident.
+Caddy's volume is included, because it holds the TLS certificate and the ACME
+account key. Losing it costs a new certificate rather than data.
 
-`pg_dump` refuses to read a server newer than itself, so the backup runs
-`pg_dump` from inside the database container. Do not replace it with a locally
-installed `pg_dump`.
+Restore is tested quarterly with `scripts/restore.sh`, which restores into a
+scratch database and never touches the live one. A backup that has never been
+restored is not a backup, and row counts are not a restore: point a staging API
+at the scratch database and sign in as a real migrated member.
 
-Schedule it from host cron rather than a sleeping container, so it is visible in
-`crontab -l`:
+## The nightly job
 
-```
-17 3 * * * cd /srv/hsl && ./tools/backup.sh >> /var/log/hsl-backup.log 2>&1
-```
-
-The dump and the roles file are written 0600 in a 0700 directory. They hold
-every member's name, address, phone number, emergency contact, payment history
-and password hash, so they are treated the way `make secrets` treats a secret.
-
-A backup nobody has restored is not a backup. `tools/restore-drill.sh` runs in
-CI on every change: it loads a fixture into a throwaway Postgres, dumps it,
-drops the database, restores it, and fails if the rows do not come back.
-
-What it proves is that `pg_dump` and `pg_restore` round trip on the image this
-stack runs. It does not call `tools/backup.sh` or `tools/restore.sh`, so it is
-not proof that those two scripts work. Running `make backup` and then
-`./tools/restore.sh` on the dump it wrote is, and it is worth doing once on the
-host before you rely on the cron line.
-
-## Deploying a change
-
-By hand, for now.
+`scripts/nightly.sql`, once a day, by cron on the public host.
 
 ```
-ssh <host>
-cd /srv/hsl
-git pull
-make up
+0 3 * * *  cd /srv/hsl-web && make nightly >> /var/log/hsl-nightly.log 2>&1
 ```
 
-Four lines, and any volunteer can run them. A deploy workflow is worth building
-when a second person needs to deploy, or after somebody has deployed the wrong
-thing at 2am. Until then it is a dormant workflow holding an SSH key.
+It expires sessions, deletes door events older than two years, clears expired
+reset tokens, and prints how many legacy bcrypt hashes are left. When that
+number reaches zero, delete the bcrypt branch in `api/src/auth.ts` and the
+dependency with it.
 
-## When something is wrong
+## Logging
 
-The door is the part that matters, so start by working out which layer is down.
-
-Physical cards still open the door when everything here is down, because the
-controller holds its own card table. If cards are not working, the problem is the
-controller or the readers, and nothing in this repository will fix it.
-
-On the public host:
+Structured JSON to stdout, one `evt` field per line, collected by Docker with a
+size limit set.
 
 ```
-docker compose ps                        # what is running, and what keeps restarting
-docker compose logs -f web               # Caddy. This is the one that names the failure.
-docker compose logs -f api
-curl -s https://<domain>/space_api.json  # the public status contract
+login_ok  login_fail  password_upgraded  password_changed  rate_limited
+member_created  member_updated  cert_granted  cert_revoked
+credential_issued  credential_revoked  payment_recorded
+door_command  door_fault  door_link_down  door_link_up  door_started
+listening  request_failed  signing_key_generated  mail_not_sent
 ```
 
-Start with the Caddy log. It carries one line per request and an error line
-naming the layer that failed: `dial tcp 172.21.0.4:3000: connect: connection
-refused` means the API is not answering, and you have the answer before you have
-opened anything else. It redacts the Cookie and Authorization headers to the
-literal `REDACTED`, checked against the running container rather than assumed,
-so it is safe to paste into a chat while you ask for help.
+Passwords, session tokens, service token secrets and placements never appear.
+Card ids do, because `door_events` is the debugging tool for the door.
 
-Caddy writes nothing per request unless it is asked to, and the `log` directive
-in `infra/Caddyfile` is what asks. If that log is silent on a stack that is
-serving requests, you are looking at an older image than this commit.
-
-On the lab host, which is a different machine:
-
-```
-docker compose logs -f door
-curl -s http://localhost:8080/healthz
+```sh
+docker compose logs -f api | grep door_
+docker compose logs -f api | grep '"evt":"login_fail"'
 ```
 
-Running the door commands on the public host prints nothing and looks like a
-broken door service. There is no door container there.
+## Health
 
-If the door service cannot reach the API, remote control returns 503 and the card
-table goes stale. The building stays usable. This is the designed failure and it
+`GET /healthz` is liveness and deliberately does not check Postgres. An API that
+is up and cannot reach the database should stay in the load balancer and answer
+503 per request, so the failure reads as a broken database rather than as a
+missing container. `app.onError` turns a failed query into a 503 with a sentence
+rather than a stack trace.
+
+The door service answers the same thing on `HEALTH_PORT`, bound to localhost,
+and reports 503 with the last error when its last pass failed.
+
+## What breaks and what happens
+
+| Failure | Effect |
+| --- | --- |
+| `api` down | Nobody signs in. Cards still open doors. Remote control unavailable |
+| Postgres down | Same |
+| Link to the lab down | Card table goes stale, doors keep working for everyone already provisioned, remote control returns 503, public status goes stale rather than wrong |
+| Door service down | Same as above |
+| Controller down | Doors fail to whatever the hardware does. Not this system's decision |
+| Caddy down | Everything unreachable, nothing lost |
+| Signing key lost | Regenerate. Issued JWTs stop verifying for up to an hour. Sessions unaffected |
+| Members database emptied | The next pass refuses to clear the controller and says so. Cards keep working |
+
+A stale card table is the correct failure. The building stays usable and the fix
 is not urgent.
 
-## Secrets
+## Runbooks
 
-Four on the public host: the database password, the session signing key, the
-door token and the SMTP URL. One on the lab host: the controller password, plus
-the same door token.
+The 2am versions, in `docs/runbooks/`.
 
-They live as files under `secrets/`, mounted at `/run/secrets/`, which keeps them
-out of the process environment and out of `docker inspect`. `secrets/` is
-gitignored.
-
-Keep one copy in whatever password manager the lab already uses. What each loss
-costs:
-
-| Secret | If lost |
-|---|---|
-| Session signing key | Everyone is signed out. Generate a new one. |
-| Database password | Recoverable from inside the container. |
-| Door token | The two hosts stop talking. Rotate on both. |
-| SMTP URL | Password reset mail stops. Nobody who forgets a password can get back in. |
-| Controller password | Read it from the firmware, or reflash. Rotating it means changing `PRIVPASSWORD` in the firmware and the secret file together. |
-
-No secret here has the property that losing it makes data permanently unreadable.
-That was deliberate.
-
-## Upgrading Node
-
-The images pin `node:24.20-alpine`. Node 26 does not bundle corepack, so when the
-base image moves, `RUN corepack enable` in each Dockerfile becomes
-`RUN npm i -g pnpm@<the version in package.json>`.
-
-## What is in the images
-
-Each service image is `node:24.20-alpine` plus one self-contained file per entry
-point, and no `node_modules` at all. The API image is 240 MB, of which 231 MB is
-the base image and 6.9 MB is `/app`. The door image is 232 MB on the same base.
-
-The API image carries two things beside the bundles: `/app/space_api.template.json`,
-which `SPACE_API_TEMPLATE_PATH` points at, and `/app/migrations`, which the
-migrate container applies. The door image carries neither.
-
-`pnpm bundle` in each service is what builds those files, and
-`docs/decisions/0013-services-ship-as-a-bundle.md` records why it replaced
-`pnpm deploy`. A stack trace from production therefore points into a bundled
-file. Rebuild the same commit to get the same bundle and the same line numbers.
+| | |
+| --- | --- |
+| `import-the-members-database.md` | The one-time legacy import |
+| `go-back.md` | Undo a cutover |
+| `run-the-door-service.md` | Stand the door service up, with or without hardware |
+| `the-door-service-will-not-talk-to-the-controller.md` | What to check, in order |
+| `rotate-a-leaked-secret.md` | Any of the five |
+| `the-certificate-did-not-renew.md` | Caddy and ACME |
+| `the-disk-is-full.md` | What is safe to delete |

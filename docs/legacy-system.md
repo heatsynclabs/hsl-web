@@ -162,8 +162,12 @@ both newest rows happen to share a key, the other door's status comes back nil
 and nil is treated as unlocked. And the first branch reports `doors_open=both`
 whenever either door is open, not only when both are.
 
-The replacement serves the same payload from the same URL. Parity is proven byte
-for byte on a test hostname before the route moves.
+The replacement serves the same payload from the same URL, out of
+`api/space_api.template.json` and `door_state`, including the defect in the
+first branch. It adds one key the legacy document does not have, `lastchange`,
+so a reader can tell a fresh reading from a stale one, and it reports a stale
+reading as closed rather than repeating the last one it saw forever. Parity is
+proven byte for byte on a test hostname before the route moves.
 
 ## The door wire protocol, as Rails drives it
 
@@ -273,7 +277,7 @@ dump in `<pre>` and a header line `UserNum: Usermask: TagNum:`, then call
 
 Tab separated, mask before tag, and none of the three padded. The tag is
 uppercase hex only because `#define DEBUG 2` at line 105: a board built with
-DEBUG 0 or 1 prints `********` there instead, which is the unknown in section 6
+DEBUG 0 or 1 prints `********` there instead, which is the unknown in section 3
 of `HANDOFF.md`. An unwritten slot reads back as the erased EEPROM,
 `255` and `FFFFFFFF`, and `checkUser` refuses that tag at line 1511, so it is
 not a card.

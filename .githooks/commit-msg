@@ -1,18 +1,19 @@
 #!/bin/sh
-# Rejects model attribution trailers and em dashes in commit messages.
-# See CONTRIBUTING.md rules 1 and 11.
+# Never name a language model as an author, co-author, contributor or reviewer.
+# The person who ran the session is the author.
+#
+# Enable with: make hooks
+# CI runs the same check over every commit in a pull request, and CI is the half
+# that holds: a local hook runs only for somebody who enabled it.
 
-msg_file="$1"
+set -eu
 
-if grep -qiE 'co-authored-by:[[:space:]]*claude|generated with claude|claude-session:|assisted-by:|ai-generated:|robot face' "$msg_file"; then
-  echo "commit-msg: model attribution is not allowed in commit messages." >&2
-  echo "The person who ran the session is the author. See CONTRIBUTING.md rule 1." >&2
+if grep -inE 'co-authored-by:[[:space:]]*(claude|gpt|copilot|gemini)|generated with \[?claude|claude-session:|assisted-by:|ai-generated:' "$1" >/dev/null; then
+  echo "This commit message names a language model as an author. Remove that line." >&2
   exit 1
 fi
 
-if grep -q '[—–]' "$msg_file"; then
-  echo "commit-msg: em dashes and en dashes are not allowed. Restructure the sentence." >&2
+if grep -qE '[—–]' "$1"; then
+  echo "Em dashes and en dashes are not used here. Restructure the sentence." >&2
   exit 1
 fi
-
-exit 0

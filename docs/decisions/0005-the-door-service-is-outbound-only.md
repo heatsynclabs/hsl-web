@@ -1,48 +1,38 @@
-# 0005. The door service reaches out, nothing reaches in
+# 0005. The door service is outbound only
 
-Date: 2026-09-01
+Date: 2026-09-11
 Status: accepted
 
 ## Context
 
-The door service runs on the lab LAN because it is the only thing allowed to talk
-to the controller, and the controller has no public address. The public host runs
-the API. The two have to exchange commands and status.
-
-The hard requirement is that physical cards open the door when everything in this
-repository is down.
+The door controller is on the lab VLAN, speaks plain HTTP with a four hex
+character password in the query string, and has no authentication worth the
+name. The API is on a public host. Something has to cross between them.
 
 ## Alternatives
 
 | Option | Why not |
-|---|---|
-| WireGuard | No third party, but two config files that must agree, a `PersistentKeepalive` the NAT-side peer needs in order to receive anything, and failures that are silent and directional. A volunteer at 2am has to know what `wg show` means before they can start. |
-| Tailscale | By far the easiest to stand up, and the right answer for letting humans reach the lab. As the path the door depends on it adds a SaaS control plane and a default 180 day key expiry, which is a time bomb set for roughly six months after whoever configured it has moved on. |
-| Open a port to the lab | A public inbound path to the network segment holding an unauthenticated HTTP door controller. |
+| --- | --- |
+| Open an inbound port to the lab | A public path to a network segment holding an unauthenticated door controller. The switch is the real access boundary until that controller is replaced. |
+| A tunnel, such as WireGuard | Two configurations that must agree, fail silently, and fail directionally. When it breaks at 2am it breaks for somebody who did not set it up. |
+| A mesh with a control plane | A third party in the path to the building's door, and a key expiry set to fire six months after whoever configured it has moved on. |
 
 ## Decision
 
-The door service makes outbound HTTPS connections to the API and accepts no
-inbound connection. It holds a subscription for commands and posts status and
-events back. It keeps its own copy of the card table so it can reconcile the
-controller without asking anyone.
-
-The API serves `/space_api.json` from the status the door service last posted,
-which removes the tunnel from the public status path entirely.
+The door service makes outbound HTTPS calls to the API and accepts none. Its
+only listener is a health check bound to localhost. Six endpoints under `/door`,
+authenticated with a service token holding one scope.
 
 ## Consequence
 
-Easy: nothing to configure at either end beyond a URL and a token. No firewall
-rule, no NAT traversal, no third party. A volunteer debugs it with
-`docker compose logs -f door` and one `curl` from the lab.
+Easy: nothing on the public internet can reach the lab network. The lab host
+needs no inbound firewall rule, no certificate and no DNS name. A compromised
+controller holds a credential that can do one thing.
 
-Hard: when the link is down the card table goes stale, and the door keeps opening
-for everyone already provisioned. That is the correct failure: the building stays
-usable and the fix is not urgent. Remote control returns 503 honestly.
+Hard: a command waits up to one tick, five seconds, before it runs. The API
+expires anything that waited more than two minutes and records that it never
+ran, so an admin sees a command asked for and not executed rather than finding
+it silently missing.
 
-Status is as fresh as the last post, so the public indicator can lag by one
-interval. The legacy system had the same property.
-
-Flip condition: volunteers need to reach the lab host itself, at which point add
-Tailscale for people and disable key expiry on that node, as an operator
-convenience and never as the path the door's own function depends on.
+Flip condition: a command latency of five seconds becomes a real complaint,
+which would argue for a long poll rather than for an inbound port.

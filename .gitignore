@@ -1,18 +1,6 @@
 node_modules/
-dist/
-coverage/
-*.tsbuildinfo
-
 .env
-.env.*
-!.env.example
-
-.DS_Store
-*.log
-
-# Never commit member data. See CONTRIBUTING.md rule 12.
-*.dump
-*.sql.gz
 backups/
-secrets/
-legacy/
+*.key
+*.pub
+.DS_Store

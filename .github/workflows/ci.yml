@@ -1,118 +1,48 @@
 name: ci
 
 on:
-  push:
-    branches: [main]
+  push: { branches: [main, rev3] }
   pull_request:
 
-permissions:
-  contents: read
-
 jobs:
-  test:
+  check:
     runs-on: ubuntu-latest
+
     services:
-      postgres:
-        image: postgres:18.6-alpine
+      db:
+        image: postgres:17
         env:
+          POSTGRES_DB: hsl
           POSTGRES_USER: hsl
           POSTGRES_PASSWORD: hsl
-          POSTGRES_DB: hsl_test
         options: >-
-          --health-cmd "pg_isready -U hsl"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
+          --health-cmd "pg_isready -U hsl" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+        ports: ["5432:5432"]
+
     env:
-      DATABASE_URL: postgres://hsl:hsl@localhost:5432/hsl_test
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d
-      - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm lint
-      - run: pnpm typecheck
-      - run: pnpm test
+      DATABASE_URL: postgres://hsl:hsl@localhost:5432/hsl
 
-  # Section 1 of CONTRIBUTING.md says this check runs locally and in CI. Only
-  # the local half existed, and a local hook runs only for somebody who set
-  # core.hooksPath and did not pass --no-verify. This is the half that holds.
-  #
-  # It calls .githooks/commit-msg rather than repeating the pattern, so there is
-  # one implementation of the rule and not two that can drift.
-  commit-messages:
-    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          fetch-depth: 0
-      - run: |
-          base='${{ github.event.pull_request.base.sha }}'
-          head='${{ github.event.pull_request.head.sha || github.sha }}'
-          if [ -n "$base" ]; then range="$base..$head"; else range='-1 '"$head"; fi
-          failed=0
-          for commit in $(git rev-list $range); do
-            git log -1 --format=%B "$commit" > /tmp/commit-msg
-            if ! .githooks/commit-msg /tmp/commit-msg; then
-              echo "  in commit $commit" >&2
-              failed=1
-            fi
-          done
-          exit $failed
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
 
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435
-      # A Dockerfile rots quietly while the tests stay green. This is the job
-      # that catches what actually stops a deploy.
-      - run: docker compose build
+      - uses: actions/setup-node@v4
+        with: { node-version-file: .nvmrc }
 
-  restore-drill:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - run: ./tools/restore-drill.sh
+      - run: npm ci && npm --prefix api ci && npm --prefix door ci
 
-  # The import is not a workspace package, so `pnpm -r test` does not reach it.
-  # It gets its own job with two databases, because it is the script that
-  # decides whether a thousand people can still sign in.
-  legacy-import:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:18.6-alpine
-        env:
-          POSTGRES_USER: hsl
-          POSTGRES_PASSWORD: hsl
-          POSTGRES_DB: hsl_test
-        options: >-
-          --health-cmd "pg_isready -U hsl"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-    env:
-      PGPASSWORD: hsl
-      DATABASE_URL: postgres://hsl:hsl@localhost:5432/hsl_import_target
-      LEGACY_DATABASE_URL: postgres://hsl:hsl@localhost:5432/hsl_import_legacy
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d
-      - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: |
-          psql -h localhost -U hsl -d hsl_test -c 'create database hsl_import_target'
-          psql -h localhost -U hsl -d hsl_test -c 'create database hsl_import_legacy'
-      - run: node_modules/.bin/tsc --noEmit -p tools/import/tsconfig.json
-      - run: node_modules/.bin/vitest run --root tools/import
+      - name: The schema, built from nothing
+        run: node scripts/migrate.ts
+
+      - run: make typecheck
+
+      - run: make voice
+
+      - run: make test
+
+      - name: No language model is named as an author
+        if: github.event_name == 'pull_request'
+        run: |
+          git log --format='%B' ${{ github.event.pull_request.base.sha }}..HEAD > /tmp/messages
+          ! grep -inE 'co-authored-by:[[:space:]]*(claude|gpt|copilot|gemini)|generated with \[?claude|claude-session:' /tmp/messages

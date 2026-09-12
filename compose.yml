@@ -1,0 +1,70 @@
+# The public host. Three containers, one volume that matters.
+#
+# Every container has a memory and PID limit: one runaway process should not
+# take the host down and the door status with it.
+
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: hsl
+      POSTGRES_USER: hsl
+      POSTGRES_PASSWORD: ${PG_PASS:?set PG_PASS in .env, or run make secrets}
+    volumes: [db:/var/lib/postgresql/data]
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hsl"]
+      interval: 10s
+    deploy:
+      resources:
+        limits: { memory: 1g, pids: 200 }
+    logging:
+      driver: json-file
+      options: { max-size: 10m, max-file: "3" }
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    image: ghcr.io/heatsynclabs/hsl-web-api:latest
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgres://hsl:${PG_PASS}@db:5432/hsl
+      ISSUER: ${ISSUER:-http://localhost:3000}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
+      RESET_URL: ${RESET_URL:-}
+      SIGNING_KEY: ${SIGNING_KEY:-}
+      SIGNING_KEY_PUBLIC: ${SIGNING_KEY_PUBLIC:-}
+      SMTP_URL: ${SMTP_URL:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      PEPPER: ${PEPPER:-}
+      DOOR_STALE_SECONDS: 180
+      DOORS: ${DOORS:-front,rear}
+    ports: ["${API_PORT:-3000}:3000"]
+    deploy:
+      resources:
+        limits: { memory: 512m, pids: 200 }
+    logging:
+      driver: json-file
+      options: { max-size: 10m, max-file: "3" }
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    profiles: [public]
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy:/data
+    environment:
+      HSL_DOMAIN: ${HSL_DOMAIN:-localhost}
+    deploy:
+      resources:
+        limits: { memory: 256m, pids: 100 }
+
+volumes:
+  db: {}
+  caddy: {}

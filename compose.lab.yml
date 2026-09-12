@@ -1,0 +1,25 @@
+# The lab host. One container, no volume, five variables.
+#
+# It makes outbound HTTPS connections and accepts none, so nothing on the public
+# internet can reach this network segment.
+
+services:
+  door:
+    build:
+      context: .
+      dockerfile: door/Dockerfile
+    image: ghcr.io/heatsynclabs/hsl-door:latest
+    restart: unless-stopped
+    environment:
+      API_URL: ${API_URL:-https://api.heatsynclabs.org}
+      SERVICE_TOKEN: ${SERVICE_TOKEN}
+      CONTROLLER_ID: ${CONTROLLER_ID:-openaccess}
+      CONTROLLER_URL: ${CONTROLLER_URL}
+      CONTROLLER_PASSWORD: ${CONTROLLER_PASSWORD}
+      DOOR_ORDER: ${DOOR_ORDER:-front,rear}
+    deploy:
+      resources:
+        limits: { memory: 256m, pids: 100 }
+    logging:
+      driver: json-file
+      options: { max-size: 10m, max-file: "3" }
