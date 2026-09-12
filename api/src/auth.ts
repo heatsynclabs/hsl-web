@@ -184,7 +184,7 @@ async function identify(c: Context): Promise<{ member: Member; via: Via } | null
   return found === null ? null : { member: found, via: 'token' }
 }
 
-function refuse(c: Context, status: 401 | 403, message: string): Response {
+function refuse(c: Context, status: 401 | 403 | 429, message: string): Response {
   return c.json({ error: message }, status)
 }
 
@@ -263,11 +263,29 @@ export function service(scope: string): MiddlewareHandler<Env> {
 
     const id = bearer.slice(0, at)
     const secret = bearer.slice(at + 1)
+
+    /**
+     * Counted before the hash, not after.
+     *
+     * Verifying an Argon2 hash costs 19 MiB and tens of milliseconds by design,
+     * and these endpoints carry no session to rate limit. A token id is a
+     * guessable name rather than a secret, so without this anybody who can
+     * reach the API can spend the container's whole memory limit on wrong
+     * guesses. Only failures count, so a door service polling every five
+     * seconds never meets it.
+     */
+    const attempts = `service:${id}:${clientIp(c) ?? 'unknown'}`
+    if (peek(attempts) > RATE_LIMIT) {
+      log({ evt: 'rate_limited', service: id })
+      return refuse(c, 429, 'Too many attempts against that service token. Wait a quarter of an hour.')
+    }
+
     const [token] = await sql<Array<ServiceToken & { secretHash: string }>>`
       select id, name, scopes, secret_hash from service_tokens
       where id = ${id} and not revoked`
 
     if (token === undefined || !(await argonVerify(token.secretHash, secret))) {
+      bump(attempts)
       return refuse(c, 401, 'That service token is not one this API issued, or it was revoked.')
     }
     if (!token.scopes.includes(scope)) {
@@ -284,28 +302,37 @@ export function service(scope: string): MiddlewareHandler<Env> {
 
 const hits = new Map<string, { count: number; resetAt: number }>()
 
+/** One counter in fifteen minute windows, shared by everything that counts. */
+function bump(key: string): number {
+  const now = Date.now()
+  if (hits.size > 5000) for (const [old, hit] of hits) if (hit.resetAt < now) hits.delete(old)
+
+  const hit = hits.get(key)
+  if (hit === undefined || hit.resetAt < now) {
+    hits.set(key, { count: 1, resetAt: now + RATE_WINDOW_MS })
+    return 1
+  }
+  hit.count += 1
+  return hit.count
+}
+
+/** What a key has counted, without counting another one against it. */
+function peek(key: string): number {
+  const hit = hits.get(key)
+  return hit === undefined || hit.resetAt < Date.now() ? 0 : hit.count
+}
+
 /**
  * Ten attempts per IP and ten per email per fifteen minutes, counted in memory.
  * One process serving a hackerspace does not need Redis, and losing the counters
  * on a redeploy costs one window.
  */
 export function overRateLimit(c: Context, email: string | null): boolean {
-  const now = Date.now()
-  if (hits.size > 5000) for (const [key, hit] of hits) if (hit.resetAt < now) hits.delete(key)
-
   const keys = [`ip:${clientIp(c) ?? 'unknown'}`]
   if (email !== null && email !== '') keys.push(`email:${email.toLowerCase()}`)
 
   let over = false
-  for (const key of keys) {
-    const hit = hits.get(key)
-    if (hit === undefined || hit.resetAt < now) {
-      hits.set(key, { count: 1, resetAt: now + RATE_WINDOW_MS })
-      continue
-    }
-    hit.count += 1
-    if (hit.count > RATE_LIMIT) over = true
-  }
+  for (const key of keys) if (bump(key) > RATE_LIMIT) over = true
 
   if (over) log({ evt: 'rate_limited', keys: keys.length })
   return over

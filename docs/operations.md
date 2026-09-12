@@ -91,12 +91,20 @@ Structured JSON to stdout, one `evt` field per line, collected by Docker with a
 size limit set.
 
 ```
-login_ok  login_fail  password_upgraded  password_changed  rate_limited
-member_created  member_updated  cert_granted  cert_revoked
-credential_issued  credential_revoked  payment_recorded
-door_command  door_fault  door_link_down  door_link_up  door_started
-listening  request_failed  signing_key_generated  mail_not_sent
+api    login_ok  login_fail  password_upgraded  password_changed  rate_limited
+       member_created  member_updated  cert_granted  cert_revoked
+       credential_issued  credential_revoked  payment_recorded
+       door_command  door_fault  duplicate_refused  request_failed
+       listening  signing_key_generated  mail_not_sent  mail_failed
+
+door   door_started  door_link_down  door_link_up  using_simulated_controller
+
+simulator   simulator_listening  device_request
 ```
+
+That list is the whole of it, checked against the source rather than written
+from memory. `mail_failed` is the one worth an alert: a member asked for a reset
+link and did not get one, and the request answered 204 either way.
 
 Passwords, session tokens, service token secrets and placements never appear.
 Card ids do, because `door_events` is the debugging tool for the door.

@@ -99,7 +99,8 @@ the reason. A card that could not be placed, a slot the device refused, a clear
 that was withheld.
 
 **Presented** A door event for a card the reader saw that this system does not
-issue. Holding an unissued card to a reader is how a card gets enrolled: it
+issue. It carries the card id in the form the reader saw it, which is the value
+to copy when issuing the card. Holding an unissued card to a reader is how a card gets enrolled: it
 appears as a row an admin can hand to somebody.
 
 **space_api** The public JSON endpoint the lab website and the ESP8266 status

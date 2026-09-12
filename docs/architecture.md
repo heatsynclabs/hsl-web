@@ -177,7 +177,12 @@ rather than by convention. The trigger function names `TG_TABLE_NAME` rather
 than a literal, because one function serves two tables and blaming the wrong one
 tells whoever hit it something false.
 
-**`door_state`** is upserted, never appended. The legacy system wrote a status
+**`door_state`** is upserted, never appended. Its `reported_at` is this API's
+clock rather than a time the door service sent, because staleness is how long
+since this side heard from a controller, and a lab host with a skewed clock
+would otherwise read as permanently fresh or permanently stale. A report is also
+the whole truth about its controller: a door it no longer names is deleted, so
+renaming one cannot leave a row behind that makes the rest look stale forever. The legacy system wrote a status
 snapshot into its event log on every poll and reached 2,868,091 rows, of which
 2.8 million were snapshots. This schema cannot do that. It also carries
 `capabilities`, which is controller wide and repeated on each of that
@@ -195,6 +200,10 @@ device that nothing claims and clears it. That is the revoke-then-restart bug
 solved by a foreign key.
 
 ## The card list version
+
+Commands are handed over in the order they were asked for. `returning` makes no
+promise about row order, and two commands run backwards is a door left locked
+when somebody asked for it to be open.
 
 `GET /door/commands` hands back a version with every claim, and the door service
 fetches the card list only when it changes. An idle lab is one small request
@@ -279,6 +288,23 @@ belongs to the one implementation that knows what a slot is.
 An optional capability is declared, not implemented as a stub. A controller with
 no alarm does not list `alarm`, and the API refuses `alarm.arm` before it is
 ever queued.
+
+### Card ids, in both directions
+
+The API stores a card id as text with no length, case or format rule, because
+rule Two says the format belongs to the adapter. So the adapter pads it on the
+way to the device, and maps it back on the way out: a door event names the card
+id the API issued, not the eight character form the device stores. Without that,
+a card issued by hand as five hex characters would open the door and never
+appear on its holder's door log.
+
+A card id the adapter did not write has no API form and arrives as the reader
+saw it, which is the value an admin copies into `POST /api/credentials`.
+
+A card id this device cannot hold at all is a fault against that one card. It
+used to be an exception out of `uploadCards`, which took the whole pass with it
+on every tick, so one unusable value in the members database froze the card table
+for the building.
 
 ### What the adapter owns
 

@@ -121,45 +121,61 @@ const target = postgres(targetUrl)
 /** Refuses every write for the life of the connection, before any read runs. */
 await legacy`set session characteristics as transaction read only`
 
-const users = await legacy<LegacyUser[]>`
-  select id, name, email, encrypted_password as "encryptedPassword", phone,
-         postal_code as "postalCode",
-         emergency_name as "emergencyName", emergency_phone as "emergencyPhone",
-         emergency_email as "emergencyEmail",
-         current_skills as "currentSkills", desired_skills as "desiredSkills",
-         member_level as "memberLevel", hidden,
-         email_visible as "emailVisible", phone_visible as "phoneVisible",
-         admin, instructor, accountant,
-         to_char(orientation, ${legacy.unsafe(UTC)}) as "orientation",
-         to_char(waiver, ${legacy.unsafe(UTC)}) as "waiver",
-         to_char(created_at, ${legacy.unsafe(UTC)}) as "createdAt",
-         to_char(updated_at, ${legacy.unsafe(UTC)}) as "updatedAt"
-  from users order by id`
+/**
+ * Every read in one snapshot.
+ *
+ * Without the transaction each query sees the database as it is at that moment,
+ * so a member edited between the users read and the cards read produces a copy
+ * that never existed. The runbook says to point this at a restored copy nobody
+ * is writing to, and this is what makes that a belt rather than a hope.
+ */
+const snapshot = await legacy.begin(async (tx) => {
+  await tx.unsafe('set transaction isolation level repeatable read')
 
-const cards = await legacy<LegacyCard[]>`
-  select id, card_number as "cardNumber", card_permissions as "permissions",
-         user_id as "userId", name as "label",
-         to_char(created_at, ${legacy.unsafe(UTC)}) as "createdAt"
-  from cards order by id`
+  return {
+    users: await tx<LegacyUser[]>`
+      select id, name, email, encrypted_password as "encryptedPassword", phone,
+             postal_code as "postalCode",
+             emergency_name as "emergencyName", emergency_phone as "emergencyPhone",
+             emergency_email as "emergencyEmail",
+             current_skills as "currentSkills", desired_skills as "desiredSkills",
+             member_level as "memberLevel", hidden,
+             email_visible as "emailVisible", phone_visible as "phoneVisible",
+             admin, instructor, accountant,
+             to_char(orientation, ${tx.unsafe(UTC)}) as "orientation",
+             to_char(waiver, ${tx.unsafe(UTC)}) as "waiver",
+             to_char(created_at, ${tx.unsafe(UTC)}) as "createdAt",
+             to_char(updated_at, ${tx.unsafe(UTC)}) as "updatedAt"
+      from users order by id`,
 
-const certifications = await legacy<LegacyCert[]>`
-  select id, slug, name, description from certifications order by id`
+    cards: await tx<LegacyCard[]>`
+      select id, card_number as "cardNumber", card_permissions as "permissions",
+             user_id as "userId", name as "label",
+             to_char(created_at, ${tx.unsafe(UTC)}) as "createdAt"
+      from cards order by id`,
 
-const userCerts = await legacy<LegacyUserCert[]>`
-  select id, user_id as "userId", certification_id as "certificationId",
-         created_by as "createdBy",
-         to_char(created_at, ${legacy.unsafe(UTC)}) as "createdAt"
-  from user_certifications order by id`
+    certifications: await tx<LegacyCert[]>`
+      select id, slug, name, description from certifications order by id`,
 
-const payments = await legacy<LegacyPayment[]>`
-  select id, user_id as "userId", amount::text as amount,
-         to_char("date", 'YYYY-MM-DD') as "paidOn", created_by as "createdBy"
-  from payments order by id`
+    userCerts: await tx<LegacyUserCert[]>`
+      select id, user_id as "userId", certification_id as "certificationId",
+             created_by as "createdBy",
+             to_char(created_at, ${tx.unsafe(UTC)}) as "createdAt"
+      from user_certifications order by id`,
 
-const contracts = await legacy<LegacyContract[]>`
-  select id, user_id as "userId", document_file_name as "documentFileName", cosigner,
-         to_char(signed_at, ${legacy.unsafe(UTC)}) as "signedAt"
-  from contracts order by id`
+    payments: await tx<LegacyPayment[]>`
+      select id, user_id as "userId", amount::text as amount,
+             to_char("date", 'YYYY-MM-DD') as "paidOn", created_by as "createdBy"
+      from payments order by id`,
+
+    contracts: await tx<LegacyContract[]>`
+      select id, user_id as "userId", document_file_name as "documentFileName", cosigner,
+             to_char(signed_at, ${tx.unsafe(UTC)}) as "signedAt"
+      from contracts order by id`,
+  }
+})
+
+const { users, cards, certifications, userCerts, payments, contracts } = snapshot
 
 // Conversions -------------------------------------------------------------------
 

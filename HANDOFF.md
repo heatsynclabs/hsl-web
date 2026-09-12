@@ -7,8 +7,8 @@ Last updated 2026-09-11, after the audit in section 6.
 
 ## 1. State
 
-Two processes. 26 source files, about 3,900 lines including the two scripts, and
-1,600 lines of tests. Thirteen tables, forty routes, eight runtime
+Two processes. 26 source files, about 4,000 lines including the two scripts, and
+2,000 lines of tests. Thirteen tables, forty routes, eight runtime
 dependencies.
 
 ### What has been run
@@ -18,9 +18,12 @@ in containers, not inferred from the diff.
 
 - `make typecheck`: clean for both services.
 - `make voice`: clean.
-- The API suite, 59 tests, against a real Postgres with the schema built from
+- The API suite, 69 tests, against a real Postgres with the schema built from
   nothing by `scripts/migrate.ts`.
-- The door suite, 30 tests, including the whole codec over a real socket.
+- The door suite, 32 tests, including the whole codec over a real socket.
+- The CI workflow, step for step, from a clean checkout: three `npm ci`
+  installs, the schema built from nothing, then typecheck, the copy gate and
+  both suites.
 - The API image built and served `/healthz`, `/.well-known/jwks.json` and
   `/space_api.json`.
 - The whole loop end to end: an admin minted a service token, the door service
@@ -183,6 +186,16 @@ These block deployment, not development. None is technical.
   door service resolves everything it claims, and a pass cannot overlap the one
   before it, so this shows up only if the service dies mid-command. Then the
   command runs twice, or expires after two minutes, depending on timing.
+- **The first tick after a restart can label a refused read as `presented`.**
+  The adapter learns which cards are issued from `uploadCards`, and the drain
+  runs before it on that one tick. The window is five seconds from process
+  start, and the event still carries the right card id, so the member it belongs
+  to is still found.
+- **`POST /api/forgot` not waiting for the mail server has no test.** An SMTP
+  failure is not reachable from the suite, which has no SMTP server to fail.
+  `mail_failed` in the log is how it is seen instead.
+- **Nothing prunes `hits`, the rate limit counter, on a schedule.** It is swept
+  when it passes five thousand keys, which is bounded and not tidy.
 - **The mass clear guard is a fixed number, five.** It covers a card list that
   came back short. A lab with more than five cards revoked in one sitting will
   meet it, and the fault event says exactly what was withheld and why.
@@ -202,11 +215,13 @@ These block deployment, not development. None is technical.
   two status strings match the legacy derivation. Comparing against the running
   system on a test hostname is still to do, and it is the step before DNS moves.
 
-## 6. The audit, and what it changed
+## 6. The audits, and what they changed
 
-An adversarial read of the whole branch on 2026-09-11, after it was first
-written. Eleven defects, each proved with a failing test before it was fixed.
-The tests are still there.
+Two adversarial reads of the whole branch on 2026-09-11, after it was first
+written. Twenty defects between them, each proved with a failing test before it
+was fixed. The tests are still there.
+
+### The first pass, eleven
 
 **The rear door refusal could be stepped over.** `POST /api/door/command` with
 `{"action":"unlock"}` and no door named reached the controller as "unlock
@@ -253,6 +268,60 @@ TLS and headers on the public host. It is bound to the loopback now, and Caddy
 sits behind a `public` profile so a laptop does not start it.
 
 Seven routes had no test beyond the anonymous refusal. They have one now.
+
+### The second pass, nine
+
+The first pass read for correctness. This one read for the things that only go
+wrong under load, under failure, or under a clock nobody checked.
+
+**A card id did not survive the round trip.** The adapter reported door events
+using the eight character form the device stores, and the API matches
+`credentials.token` exactly. A card issued by hand as five hex characters worked
+on the door and never appeared on its holder's door log. The adapter maps it
+back now, which is what section 6.3 of the specification means by "arrives as a
+card id".
+
+**Commands could run backwards.** `returning` makes no promise about row order,
+so a lock and an unlock claimed in one pass could reach the controller in either
+order. A door left locked when somebody asked for it to be open is the whole
+difference between a member getting in and not.
+
+**Freshness trusted the lab host's clock.** `door_state.reported_at` was
+whatever the door service sent. A host whose clock is a day out made the door
+read as permanently stale, or permanently fresh. The API stamps it now, because
+staleness is how long since this side heard from a controller.
+
+**Renaming a door made the controller stale forever.** The row for the old name
+stayed with its old timestamp, and the freshness reading takes the oldest. A
+state report is now the whole truth about its controller.
+
+**One bad placement lost the whole batch.** An id that is no longer a credential
+hit a foreign key and rolled back the placements for every other card in the
+pass. Unknown ids are skipped.
+
+**Guessing at a service token could take the API down.** Verifying an Argon2
+hash costs 19 MiB and tens of milliseconds by design, the token id is a
+guessable name rather than a secret, and nothing under `/door` carries a session
+to rate limit. Failures are counted now, and a door service polling every five
+seconds never meets the count.
+
+**A reset for an address that exists took measurably longer**, because the
+request waited for the mail server, and an SMTP server that was down turned it
+into a 503 for members who exist and a 204 for everybody else. The send is not
+awaited and cannot reject.
+
+**An admin could lock everybody out of admin.** Taking your own role away or
+suspending yourself is refused, because there is no guarantee a second admin
+exists and every route that could put it back needs one.
+
+**Two requests racing on a unique index answered 503.** The pre-checks cannot
+see a row that has not committed. A duplicate is a 409 now, centrally, so a
+route added next year gets it too.
+
+Also proved rather than assumed this round: the CI workflow runs end to end from
+a clean checkout with `npm ci` and a schema built from nothing, the import reads
+the legacy database in one snapshot rather than one per query, and the list of
+log events in `docs/operations.md` matches what the code emits.
 
 ## 7. Open licence questions
 

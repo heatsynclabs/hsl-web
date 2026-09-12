@@ -302,6 +302,35 @@ describe('defects found in audit', () => {
     assert.deepEqual(result.removed, ['a'])
   })
 
+  test('a door event names the card id the API issued, not the padded one', async () => {
+    const { device, door } = adapter()
+
+    // The API stores a card id as text and has no format rule, so an admin can
+    // issue one as five hex characters. The device is written eight. If the
+    // event came back in the device's form it would match no credential row,
+    // and the member who opened the door would not be on their own door log.
+    await door.uploadCards([card('a', '4b1c7')])
+    device.present('0004B1C7', 'granted')
+
+    const events = await door.drainEvents()
+    assert.deepEqual(
+      events.map((event) => [event.kind, event.token]),
+      [['entry', '4b1c7']],
+    )
+  })
+
+  test('a card the API never issued arrives in the form the reader saw it', async () => {
+    const { device, door } = adapter()
+    await door.uploadCards([card('a', '4b1c7')])
+    device.present('0000FFFF')
+
+    const events = await door.drainEvents()
+    assert.deepEqual(
+      events.map((event) => [event.kind, event.token]),
+      [['presented', '0000FFFF']],
+    )
+  })
+
   test('the whole pass survives a card id the controller cannot hold', async () => {
     const { door } = adapter()
     await door.uploadCards([card('a', 'nonsense')])

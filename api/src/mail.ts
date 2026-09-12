@@ -16,6 +16,11 @@ const BODY = (link: string): string =>
     'nothing has changed and you can ignore this.',
   ].join('\n')
 
+/**
+ * Never rejects. Callers do not wait for it, so a rejection here would be an
+ * unhandled one, and a mail server that is down is an operational problem to
+ * read in the log rather than something a member should meet as an error.
+ */
 export async function sendResetLink(to: string, token: string): Promise<void> {
   const link = `${config.resetUrl}?token=${token}`
 
@@ -25,10 +30,14 @@ export async function sendResetLink(to: string, token: string): Promise<void> {
     return
   }
 
-  await transport.sendMail({
-    from: config.mailFrom,
-    to,
-    subject: 'Set your HeatSync Labs password',
-    text: BODY(link),
-  })
+  try {
+    await transport.sendMail({
+      from: config.mailFrom,
+      to,
+      subject: 'Set your HeatSync Labs password',
+      text: BODY(link),
+    })
+  } catch (error) {
+    log({ evt: 'mail_failed', to, message: String(error) })
+  }
 }

@@ -69,7 +69,11 @@ export const forgot: Handler<Env> = async (c) => {
                          reset_expires = now() + ${`${RESET_MINUTES} minutes`}::interval,
                          updated_at = now()
       where id = ${member.id}`
-    await sendResetLink(member.email, token)
+    // Not awaited. Sending takes far longer than not sending, so waiting for it
+    // answers "is this address a member" to anybody with a stopwatch, and an
+    // SMTP server that is down would turn this into a 503 for members who exist
+    // and a 204 for everybody else.
+    void sendResetLink(member.email, token)
   }
 
   return c.body(null, 204)

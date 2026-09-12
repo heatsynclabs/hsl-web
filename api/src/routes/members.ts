@@ -227,6 +227,9 @@ export const update: Handler<Env> = async (c) => {
 
   // Checked here rather than left to the unique index, which would surface as
   // a 503 with nothing an admin could act on.
+  const lockout = wouldLockOut(actor.id, id, patch)
+  if (lockout !== null) return c.json({ error: lockout }, 409)
+
   if (typeof patch.email === 'string') {
     const held = await byEmail(patch.email)
     if (held !== null && held.id !== id) {
@@ -305,6 +308,30 @@ export const issueReset: Handler<Env> = async (c) => {
 }
 
 // ----------------------------------------------------------------------------
+
+/**
+ * An admin taking their own admin role away, or suspending themselves.
+ *
+ * There is no guarantee a second admin exists, and every route that could put
+ * it back needs one. The way out is then a psql session on the host, which is
+ * the runbook nobody wants to be reading at the time.
+ */
+function wouldLockOut(
+  actorId: string,
+  targetId: string,
+  patch: Record<string, unknown>,
+): string | null {
+  if (actorId !== targetId) return null
+
+  const roles = patch.roles
+  if (Array.isArray(roles) && !roles.includes('admin')) {
+    return 'Taking your own admin role away needs another admin to do it. Nothing was changed.'
+  }
+  if (typeof patch.status === 'string' && patch.status !== 'active') {
+    return 'Suspending your own account needs another admin to do it. Nothing was changed.'
+  }
+  return null
+}
 
 async function byId(id: string): Promise<Member | null> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return null

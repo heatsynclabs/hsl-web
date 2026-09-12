@@ -88,6 +88,17 @@ app.notFound((c) => c.json({ error: 'There is no route here. The list of them is
  * missing container.
  */
 app.onError((error, c) => {
+  // A unique index refusing a duplicate is an answer, not a failure. Routes
+  // look first and say something specific; this catches the case where two
+  // requests looked at the same moment and neither could see the other.
+  if ((error as { code?: string }).code === '23505') {
+    log({ evt: 'duplicate_refused', path: c.req.path })
+    return c.json(
+      { error: 'Something already holds that value. Nothing was changed. Look again and retry.' },
+      409,
+    )
+  }
+
   log({ evt: 'request_failed', path: c.req.path, message: String(error) })
   return c.json(
     { error: 'Something this request needed did not answer. Nothing was changed. Try again.' },

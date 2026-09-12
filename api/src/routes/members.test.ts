@@ -10,9 +10,12 @@ async function adminCookie(): Promise<string> {
   return signIn(app, admin.email)
 }
 
+// File scope, because the describe below runs after this one finishes and an
+// after() inside a describe closes the pool too early for it.
+after(stop)
+
 describe('members', () => {
   beforeEach(reset)
-  after(stop)
 
   test('signup creates the account, records the waiver, and audits itself', async () => {
     const answer = await call(app, '/api/signup', {
@@ -223,5 +226,65 @@ describe('members', () => {
     // And nobody else reads it.
     const plain = await makeMember()
     assert.equal((await call(app, '/api/audit', { cookie: await signIn(app, plain.email) })).status, 403)
+  })
+})
+
+describe('the second audit', () => {
+  beforeEach(reset)
+
+  test('an admin cannot take their own admin role away', async () => {
+    const admin = await makeMember({ roles: ['admin'], oriented: true })
+    const cookie = await signIn(app, admin.email)
+
+    const answer = await call(app, `/api/members/${admin.id}`, {
+      method: 'PATCH',
+      cookie,
+      body: { roles: ['instructor'] },
+    })
+
+    assert.equal(answer.status, 409)
+    assert.match(((await answer.json()) as { error: string }).error, /another admin/)
+  })
+
+  test('an admin cannot suspend themselves', async () => {
+    const admin = await makeMember({ roles: ['admin'], oriented: true })
+    const cookie = await signIn(app, admin.email)
+
+    const answer = await call(app, `/api/members/${admin.id}`, {
+      method: 'PATCH',
+      cookie,
+      body: { status: 'suspended' },
+    })
+    assert.equal(answer.status, 409)
+  })
+
+  test('an admin can change everything else about themselves', async () => {
+    const admin = await makeMember({ roles: ['admin'], oriented: true })
+    const cookie = await signIn(app, admin.email)
+
+    const answer = await call(app, `/api/members/${admin.id}`, {
+      method: 'PATCH',
+      cookie,
+      body: { memberLevel: 100, roles: ['admin', 'accountant'] },
+    })
+    assert.equal(answer.status, 200)
+  })
+
+  test('two admins issuing the same card at once end with one card', async () => {
+    const cookie = await adminCookie()
+    const first = await makeMember()
+    const second = await makeMember()
+
+    // The check before the insert cannot see a row that has not committed yet,
+    // so the unique index is what actually holds. It has to read as a refusal
+    // rather than as the API falling over.
+    const answers = await Promise.all([
+      call(app, '/api/credentials', { method: 'POST', cookie, body: { token: '0004B1C7', memberId: first.id } }),
+      call(app, '/api/credentials', { method: 'POST', cookie, body: { token: '0004B1C7', memberId: second.id } }),
+    ])
+
+    const codes = answers.map((answer) => answer.status).sort()
+    assert.deepEqual(codes, [201, 409], `got ${codes.join(' and ')}`)
+    assert.equal((await sql`select id from credentials`).length, 1)
   })
 })

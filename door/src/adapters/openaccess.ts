@@ -309,8 +309,13 @@ export interface Plan {
   withheld: number[]
   /** Credential ids this device cannot hold at all. Reported, never retried. */
   rejected: string[]
-  /** Every tag the device should be holding once this plan has run. */
-  holding: string[]
+  /**
+   * Every card the device should be holding once this plan has run, as the pair
+   * of what the device stores and what the API calls it. The two differ: the
+   * API has no format rule for a card id and this device wants eight uppercase
+   * hex characters.
+   */
+  holding: Array<{ tag: string; token: string }>
 }
 
 /**
@@ -393,7 +398,10 @@ export function planUpload(cards: readonly Card[], held: readonly Placement[]): 
     faults,
     withheld: withhold ? clears.sort((a, b) => a - b) : [],
     rejected,
-    holding: [...wanted.values()].map((entry) => entry.placement.tag),
+    holding: [...wanted.values()].map((entry) => ({
+      tag: entry.placement.tag,
+      token: entry.card.token,
+    })),
   }
 }
 
@@ -437,7 +445,8 @@ export function createOpenAccess(options: OpenAccessOptions): DoorAdapter {
     options.transport(chained(parameter, options.password))
 
   const [door1, door2] = options.doors
-  const known = new Set<string>()
+  /** What the device stores against what the API calls it. See Plan.holding. */
+  const issued = new Map<string, string>()
   let readable: boolean | null = null
   let pending: DoorEvent[] = []
 
@@ -510,8 +519,8 @@ export function createOpenAccess(options: OpenAccessOptions): DoorAdapter {
 
       // What the reader should now recognise. A refused read of anything else
       // is a card being offered for enrolment rather than a card being denied.
-      known.clear()
-      for (const tag of plan.holding) known.add(tag)
+      issued.clear()
+      for (const card of plan.holding) issued.set(card.tag, card.token)
 
       return { placements, removed, faults }
     },
@@ -562,7 +571,16 @@ export function createOpenAccess(options: OpenAccessOptions): DoorAdapter {
         // an unissued card to the reader looks like, and it is the whole of how
         // enrolment works: it arrives at the API as a `presented` row an admin
         // can hand to somebody in one click.
-        events.push({ kind: kindOf(read.outcome, known.has(read.tag)), at, token: read.tag })
+        // Reported as the card id the API issued, so the event lands on the
+        // member who holds it. A tag this service did not write has no API
+        // form, and arrives as the reader saw it, which is what an admin
+        // copies into POST /api/credentials.
+        const token = issued.get(read.tag)
+        events.push({
+          kind: kindOf(read.outcome, token !== undefined),
+          at,
+          token: token ?? read.tag,
+        })
       }
 
       return events

@@ -326,6 +326,110 @@ describe('defects found in audit', () => {
     assert.match(((await answer.json()) as { error: string }).error, /which door/i)
   })
 
+  test('commands are handed over in the order they were asked for', async () => {
+    const bearer = await makeServiceToken()
+    const opener = await makeMember({ doorAccess: true })
+    await reported()
+
+    // Two commands half a minute apart, both inside the two minute window that
+    // expires one nobody claimed. Run in the other order the door ends up
+    // locked when somebody asked for it to be unlocked, which is the difference
+    // between a member getting in and not.
+    for (const [action, ago] of [
+      ['lock', 60],
+      ['unlock', 30],
+    ] as const) {
+      await sql`
+        insert into door_commands (controller_id, action, door, requested_by, requested_at)
+        values ('openaccess', ${action}, 'front', ${opener.id}, now() - ${`${ago} seconds`}::interval)`
+    }
+
+    const answer = await call(app, '/door/commands', { bearer, controller: CONTROLLER })
+    const { commands } = (await answer.json()) as { commands: Array<{ action: string }> }
+    assert.deepEqual(
+      commands.map((one) => one.action),
+      ['lock', 'unlock'],
+    )
+  })
+
+  test('a door the controller stopped reporting does not leave the rest stale', async () => {
+    const member = await makeMember()
+    const cookie = await signIn(app, member.email)
+    const bearer = await makeServiceToken()
+
+    await call(app, '/door/state', {
+      method: 'POST',
+      bearer,
+      controller: CONTROLLER,
+      body: { doors: { front: 'locked', rear: 'locked' }, capabilities: ['open'] },
+    })
+    // The lab renames a door, or moves to a controller with one. The row for
+    // the old name would sit there with an old timestamp and make the whole
+    // controller read as stale forever.
+    await call(app, '/door/state', {
+      method: 'POST',
+      bearer,
+      controller: CONTROLLER,
+      body: { doors: { front: 'unlocked' }, capabilities: ['open'] },
+    })
+
+    const state = (await (await call(app, '/api/door', { cookie })).json()) as Array<{
+      doors: Record<string, string>
+      stale: boolean
+    }>
+    assert.deepEqual(state[0]?.doors, { front: 'unlocked' })
+    assert.equal(state[0]?.stale, false)
+  })
+
+  test('freshness is measured by this API, not by the clock on the lab host', async () => {
+    const member = await makeMember()
+    const cookie = await signIn(app, member.email)
+    const bearer = await makeServiceToken()
+
+    await call(app, '/door/state', {
+      method: 'POST',
+      bearer,
+      controller: CONTROLLER,
+      body: {
+        doors: { front: 'locked' },
+        capabilities: ['open'],
+        // A lab host whose clock is a day out. Believing it makes the door
+        // permanently stale, or permanently fresh, neither of which is a
+        // reading of anything.
+        reportedAt: new Date(Date.now() - 86_400_000).toISOString(),
+      },
+    })
+
+    const state = (await (await call(app, '/api/door', { cookie })).json()) as Array<{ stale: boolean }>
+    assert.equal(state[0]?.stale, false)
+  })
+
+  test('a placement for a card that is not there does not lose the batch', async () => {
+    const bearer = await makeServiceToken()
+    const holder = await makeMember({ doorAccess: true })
+    const [real] = await sql<Array<{ id: string }>>`
+      insert into credentials (token, member_id) values ('0004B1C7', ${holder.id}) returning id`
+
+    const answer = await call(app, '/door/placements', {
+      method: 'POST',
+      bearer,
+      controller: CONTROLLER,
+      body: {
+        placements: [
+          { cardId: '00000000-0000-4000-8000-000000000000', placement: { slot: 1 } },
+          { cardId: real?.id, placement: { slot: 2 } },
+        ],
+      },
+    })
+
+    assert.equal(answer.status, 200)
+    const rows = await sql<Array<{ credentialId: string }>>`select credential_id from door_placements`
+    assert.deepEqual(
+      rows.map((row) => row.credentialId),
+      [real?.id],
+    )
+  })
+
   test('locking everything needs no door, because locking is the safe direction', async () => {
     const opener = await makeMember({ doorAccess: true })
     const cookie = await signIn(app, opener.email)
@@ -337,5 +441,32 @@ describe('defects found in audit', () => {
       body: { action: 'lock' },
     })
     assert.equal(answer.status, 202)
+  })
+})
+
+describe('the second audit, on the service boundary', () => {
+  beforeEach(reset)
+
+  test('guessing at a service token secret is counted and then refused', async () => {
+    await makeServiceToken('door-front', ['door'])
+
+    // The id is a name somebody can guess. Verifying the secret costs 19 MiB
+    // and tens of milliseconds, so without a count this is a way to spend the
+    // container's memory limit from outside.
+    for (let attempt = 0; attempt < 11; attempt += 1) {
+      await call(app, '/door/cards', { bearer: 'door-front.wrong', controller: CONTROLLER })
+    }
+
+    const answer = await call(app, '/door/cards', { bearer: 'door-front.wrong', controller: CONTROLLER })
+    assert.equal(answer.status, 429)
+  })
+
+  test('a door service polling every five seconds never meets that count', async () => {
+    const bearer = await makeServiceToken()
+
+    for (let tick = 0; tick < 20; tick += 1) {
+      const answer = await call(app, '/door/commands', { bearer, controller: CONTROLLER })
+      assert.equal(answer.status, 200, `tick ${tick} was refused`)
+    }
   })
 })

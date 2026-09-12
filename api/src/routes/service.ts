@@ -70,9 +70,14 @@ export const placements: Handler<Env> = async (c) => {
       const record = entry as { cardId?: unknown; placement?: unknown }
       const cardId = text(record.cardId, 64)
       if (cardId === null || record.placement === undefined) continue
+      if (!UUID.test(cardId)) continue
+      // Skipped rather than refused, so one stale id out of sixty four does not
+      // roll back the placements for the rest of the pass.
       await tx`
         insert into door_placements (controller_id, credential_id, placement)
-        values (${controller}, ${cardId}, ${sql.json(record.placement as postgres.JSONValue)})
+        select ${controller}, ${cardId}::uuid,
+               ${sql.json(record.placement as postgres.JSONValue)}
+        where exists (select 1 from credentials where id = ${cardId}::uuid)
         on conflict (controller_id, credential_id)
         do update set placement = excluded.placement, written_at = now()`
     }
@@ -113,16 +118,21 @@ export const commands: Handler<Env> = async (c) => {
               ${sql.json({ command: command.action, outcome: 'expired', id: command.id })})`
   }
 
-  const claimed = await sql<Array<{ id: string; action: string; door: string | null }>>`
+  // Ordered here rather than in the update, because `returning` makes no
+  // promise about the order rows come back in. Two commands run backwards is a
+  // door left locked when somebody asked for it to be open.
+  const claimed = await sql<
+    Array<{ id: string; action: string; door: string | null; requestedAt: Date }>
+  >`
     update door_commands set claimed_at = now()
-    where id in (
-      select id from door_commands
-      where controller_id = ${controller} and resolved_at is null
-      order by requested_at
-    )
-    returning id, action, door`
+    where controller_id = ${controller} and resolved_at is null
+    returning id, action, door, requested_at`
 
-  return c.json({ commands: claimed, cardsVersion: versionOf(await cardRows(controller)) })
+  const commands = claimed
+    .sort((a, b) => a.requestedAt.getTime() - b.requestedAt.getTime())
+    .map(({ id, action, door }) => ({ id, action, door }))
+
+  return c.json({ commands, cardsVersion: versionOf(await cardRows(controller)) })
 }
 
 export const commandResult: Handler<Env> = async (c) => {
@@ -161,7 +171,6 @@ export const state: Handler<Env> = async (c) => {
     .map(String)
     .filter((capability) => CAPABILITIES.includes(capability))
 
-  const reportedAt = text(form.reportedAt, 40) ?? new Date().toISOString()
   const rows = Object.entries(doors as Record<string, unknown>).filter(([, value]) =>
     STATES.includes(String(value)),
   )
@@ -169,14 +178,24 @@ export const state: Handler<Env> = async (c) => {
 
   await sql.begin(async (tx) => {
     for (const [door, value] of rows) {
+      // now(), not a time the caller sent. Staleness is how long since this API
+      // heard from a controller, which is a measurement this side makes. A lab
+      // host with a skewed clock would otherwise read as permanently stale or
+      // permanently fresh, and neither is a reading of anything.
       await tx`
         insert into door_state (controller_id, door, state, capabilities, reported_at)
-        values (${controller}, ${door}, ${String(value)}, ${capabilities}, ${reportedAt})
+        values (${controller}, ${door}, ${String(value)}, ${capabilities}, now())
         on conflict (controller_id, door) do update
           set state = excluded.state,
               capabilities = excluded.capabilities,
               reported_at = excluded.reported_at`
     }
+    // The report is the whole truth about this controller. A door it used to
+    // have and no longer names would sit here with an old timestamp and make
+    // the whole controller read as stale forever.
+    await tx`
+      delete from door_state
+      where controller_id = ${controller} and door not in ${sql(rows.map(([door]) => door))}`
   })
 
   return c.body(null, 204)
