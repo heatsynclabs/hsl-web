@@ -3,7 +3,7 @@
 What exists, what is not done, what nobody has confirmed, and who has to decide.
 Adding to this file is not an admission. It is the point.
 
-Last updated 2026-09-12, after the six passes in section 6.
+Last updated 2026-09-12, after the seven passes in section 6.
 
 ## 1. State
 
@@ -335,8 +335,8 @@ These block deployment, not development. None is technical.
 
 ## 6. The audits, and what they taught
 
-Six adversarial passes over the whole branch, on 2026-09-11 and 2026-09-12,
-after it was first written. Forty eight defects, each proved with a probe or a
+Seven adversarial passes over the whole branch, on 2026-09-11 and 2026-09-12,
+after it was first written. Fifty defects, each proved with a probe or a
 failing test before it was fixed, and each fix covered by a test where a test
 can reach it.
 
@@ -354,6 +354,7 @@ of the same.
 | 4 | Running the things that had only been written | 3 |
 | 5 | Two controllers, a soak, concurrency, and measuring | 4 |
 | 6 | Load at lab size, a slow board, and the import script | 5 |
+| 7 | Walking all seven runbooks, command by command | 2 |
 
 ### The patterns
 
@@ -437,7 +438,9 @@ changed" when the command row had been. The expiry path in the same file had the
 same shape. Both are one transaction now. The rule was right and the reach of the
 thing that enforces it was too short.
 
-**A runbook step that cannot be run.** `docs/runbooks/the-door-service-will-not-
+**A runbook step that cannot be run.** Three of them now, and the seventh pass
+went looking on purpose after the sixth found the first by accident.
+`docs/runbooks/the-door-service-will-not-
 talk-to-the-controller.md` opens with `curl -s localhost:9000`, and that cannot
 work on the lab host: the health server binds to localhost inside the container
 and `compose.lab.yml` publishes no port, because this service accepts nothing
@@ -446,6 +449,29 @@ Running it turned up a second layer as well, that `localhost` inside the image
 resolves to IPv6 first while the health server is on IPv4, so even the corrected
 command needed the address rather than the name. Step one of the 2am runbook,
 for the failure the runbook is named after.
+
+The seventh pass walked all seven runbooks command by command against a running
+system. Two more came out of it.
+
+`docs/runbooks/import-the-members-database.md` ends with the SQL that makes the
+first admin on a fresh install with no legacy database, and it sets
+`oriented = true`. There is no such column: it is `oriented_on`, a date, which is
+section 2 of this file and has been since the schema was written. So the answer
+to "there is no admin and nothing can be done without one" was a statement that
+answers `column "oriented" of relation "members" does not exist`.
+
+`scripts/backup.sh` left a nought byte dump behind when the database was down.
+The shell creates the file the moment it opens the redirect, before `pg_dump`
+runs, so a night when Postgres was not up left an `hsl-<stamp>.dump` of zero
+bytes sitting in the backup directory looking exactly like a backup, and the
+newest file is what somebody restoring reaches for. `pg_restore -l` on it says
+"input file is too short". That is gate one of section 13 of `CONTRIBUTING.md`,
+which is one of the two rules in this repository that are not negotiable. The
+dump is now written under a name a restore will not match and moved into place
+only once `pg_dump` has succeeded.
+
+The other five runbooks did what they said. That is in the list below, because a
+runbook that was checked is worth as much as one that was fixed.
 
 **A report that counted intentions rather than rows.** `scripts/import.ts` has
 always skipped a row it could not place, and the report counted the legacy table.
@@ -587,6 +613,27 @@ nobody spends the time again.
 - **Commands are routed per controller correctly.** Two controllers, two
   simulated boards: each ran only what was queued for it, and a stale controller
   refusing a command does not stop the other one taking one.
+- **Five of the seven runbooks do what they say**, walked command by command
+  against a running system on 2026-09-12. `run-the-door-service.md` end to end:
+  the token minted, the service started, `GET /api/door` answered `stale: false`
+  with four capabilities, an `open` came back `done` inside one tick, and a card
+  held to the simulated reader arrived as `presented | 0000FFFF`.
+  `the-certificate-did-not-renew.md` with a real Caddy in front of the API: all
+  four of its commands answer, including `docker compose logs caddy` and
+  `exec caddy` without the `--profile public` flag, which was the thing worth
+  checking because that service is behind a profile. Port 80 answers the 308 it
+  says to expect, and the four security headers arrive. `go-back.md` step one
+  answers. `scripts/restore.sh` exits 1 on a dump that is not one and 0 on a dump
+  that is, so the half of gate one that reads a backup was already right.
+- **Rotating the signing key works, the whole way.** `make keys` was run, its two
+  values went into a `.env`, an API was started on them, and the JWKS it
+  published, a token exchanged against it and that token reaching `/api/me` with
+  a 200 all lined up. Worth knowing how: `make keys` prints a PEM with real
+  newlines, not the escaped form, so the value in `.env` spans lines. Docker
+  Compose reads that correctly because it follows the dotenv rules for a quoted
+  value. `docker run --env-file` does not and refuses the file outright, so
+  reaching for that instead is the trap. `pem()` in `api/src/tokens.ts` handles
+  the escaped form as well, which is why both survive.
 - **The import does not need to tolerate a null email or a null timestamp.**
   This was about to be changed. `LegacyUser` types `email`, `createdAt` and
   `updatedAt` as non-null where nearly every other field is nullable, and
@@ -623,10 +670,13 @@ The honest list, and the best place for a sixth pass to start.
   found the report was counting intentions. `scripts/migrate.ts` has been run and
   not read the same way, and it is the one that decides what a deploy does to the
   schema.
-- **Nothing reads the runbooks by running them.** One of the seven opened with a
-  command that cannot work, and that was found by typing it. The other six have
-  not been walked step by step against a running system, and that is now the
-  cheapest place left to find something.
+- **The runbooks have now been walked and the docs have not.** All seven runbooks
+  were run command by command and two were broken. `docs/operations.md`,
+  `docs/architecture.md` and the thirteen ADRs carry claims of the same kind and
+  nobody has checked them the same way. `docs/legacy-system.md` is the one that
+  matters most and the one that cannot be checked without the dump.
+- **`make secrets` and `make hooks` have never been run here.** `make keys` has,
+  and it works: see below.
 
 ## 7. Open licence questions
 

@@ -56,13 +56,20 @@ run it again with `--apply`.
   "payments": 8291,
   "waivers": 318,
   "withDoorAccess": 63,
-  "withoutPassword": 31
+  "withoutPassword": 31,
+  "leftBehind": {
+    "memberCertifications": 0,
+    "payments": 0,
+    "waivers": 0
+  }
 }
 ```
 
-Those numbers are what the production dump held on 2026-09-01. A number that
-differs is not an error, and a number that differs by a lot is worth
-understanding before continuing.
+Those numbers are what the production dump held on 2026-09-01, counted the way
+the import counts them now, which is rows it will write rather than rows the
+legacy tables hold. `leftBehind` is the difference, and every row in it has a
+warning naming it and saying why. A `leftBehind` that is not zero is not an
+error and is worth reading before continuing.
 
 Failures stop the import and nothing is written. Each names a legacy row id:
 
@@ -70,10 +77,14 @@ Failures stop the import and nothing is written. Each names a legacy row id:
 - two users sharing an email under `lower(email)`
 - a card whose user does not exist
 - two cards whose ids normalise to the same value
+- two certifications whose slugs normalise to the same value, which would merge
+  two tool certifications into one and misplace every grant of the second
 
 Warnings are reported and do not stop it: duplicate certification pairs, skills
-text longer than a profile edit accepts, and payments or contracts belonging to
-a user that is not there.
+text longer than a profile edit accepts, payments or contracts belonging to a
+user that is not there, a payment with no amount, a payment with no date, and a
+grant naming a certification that is not in `certifications`. The last three are
+rows that are left behind, so they are in the `leftBehind` count above.
 
 ## 4. Write
 
@@ -129,8 +140,12 @@ Then fix what the failures named and start again at step 3.
 A fresh install has no admin. Make the first one by hand, and record it, because
 nothing else will:
 
+The column is `oriented_on`, a date, because around seven hundred legacy rows
+carry when orientation happened and a boolean throws that away. The guards read
+it as "is this null".
+
 ```sql
-update members set roles = array['admin'], oriented = true
+update members set roles = array['admin'], oriented_on = current_date
 where lower(email) = 'someone@heatsynclabs.org';
 
 insert into audit_log (actor_id, action, target_id, detail)
