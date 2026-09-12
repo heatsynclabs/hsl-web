@@ -157,10 +157,32 @@ begin
 end;
 $$ language plpgsql;
 
-create trigger audit_log_append_only   before update or delete on audit_log
+-- audit_log is kept forever, so nothing may change it and nothing may remove it.
+create trigger audit_log_append_only before update or delete on audit_log
   for each row execute function refuse_change();
-create trigger door_events_append_only before update or delete on door_events
+
+-- door_events is kept for two years, so it needs one thing audit_log does not:
+-- the nightly job has to be able to remove what is past that. A trigger that
+-- refuses every delete makes the retention in scripts/nightly.sql impossible to
+-- run and the table grow forever, which is what it did until somebody ran it.
+--
+-- The window lives here rather than in the job, so this is the authority on
+-- what may go. A job asking for a shorter one meets this and says so, rather
+-- than quietly taking more than it should.
+create function refuse_early_delete() returns trigger as $$
+begin
+  raise exception
+    'door event % is from % and this table keeps two years, so it was left alone. Only the nightly retention removes door events.',
+    OLD.id, OLD.at::date;
+end;
+$$ language plpgsql;
+
+create trigger door_events_no_change before update on door_events
   for each row execute function refuse_change();
+
+create trigger door_events_retention before delete on door_events
+  for each row when (OLD.at > now() - interval '2 years')
+  execute function refuse_early_delete();
 
 -- 4. The door ---------------------------------------------------------------
 

@@ -58,12 +58,31 @@ describe('the record', () => {
     assert.equal((await sql`select id from audit_log`).length, 1)
   })
 
-  test('door_events refuses update and delete, and names itself rather than audit_log', async () => {
+  test('door_events refuses a change, and names itself rather than audit_log', async () => {
     await sql`insert into door_events (controller_id, kind) values ('openaccess', 'entry')`
 
     await assert.rejects(
-      () => sql`delete from door_events`,
+      () => sql`update door_events set kind = 'denied'`,
       (error: Error) => error.message.includes('door_events is append only'),
+    )
+  })
+
+  test('door_events keeps two years, and the nightly job can take what is past it', async () => {
+    await sql`
+      insert into door_events (controller_id, kind, at) values
+        ('openaccess', 'entry', now() - interval '3 years'),
+        ('openaccess', 'entry', now() - interval '1 year')`
+
+    // The retention in scripts/nightly.sql is the only thing that removes a
+    // door event. A trigger refusing every delete makes it impossible to run
+    // and the table grow forever, which is what it did until somebody ran it.
+    await sql`delete from door_events where at < now() - interval '2 years'`
+    assert.equal((await sql`select id from door_events`).length, 1)
+
+    // And nothing else can, whatever it asks for.
+    await assert.rejects(
+      () => sql`delete from door_events`,
+      (error: Error) => error.message.includes('this table keeps two years'),
     )
   })
 

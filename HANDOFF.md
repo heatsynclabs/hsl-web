@@ -3,12 +3,12 @@
 What exists, what is not done, what nobody has confirmed, and who has to decide.
 Adding to this file is not an admission. It is the point.
 
-Last updated 2026-09-11, after the audit in section 6.
+Last updated 2026-09-12, after the four passes in section 6.
 
 ## 1. State
 
 Two processes. 26 source files, about 4,300 lines including the two scripts, and
-2,100 lines of tests. Thirteen tables, forty routes, eight runtime
+2,200 lines of tests. Thirteen tables, forty routes, eight runtime
 dependencies.
 
 ### What has been run
@@ -18,12 +18,21 @@ in containers, not inferred from the diff.
 
 - `make typecheck`: clean for both services.
 - `make voice`: clean.
-- The API suite, 77 tests, against a real Postgres with the schema built from
+- The API suite, 78 tests, against a real Postgres with the schema built from
   nothing by `scripts/migrate.ts`.
 - The door suite, 36 tests, including the whole codec over a real socket.
 - The CI workflow, step for step, from a clean checkout: three `npm ci`
   installs, the schema built from nothing, then typecheck, the copy gate and
   both suites.
+- `scripts/nightly.sql`, against planted rows on both sides of every line it
+  draws. It deletes the expired session and keeps the live one, deletes the
+  three year old door event and keeps the one year old one, and clears the
+  expired reset token and keeps the live one.
+- `scripts/backup.sh` and `scripts/restore.sh`, as a round trip: a dump taken
+  from the running stack and restored into a scratch database that answered
+  with the row counts it went in with.
+- `scripts/migrate.ts` across three files, applied in order, then run again to
+  prove it skips what it has already done.
 - The API image built and served `/healthz`, `/.well-known/jwks.json` and
   `/space_api.json`.
 - The whole loop end to end: an admin minted a service token, the door service
@@ -87,6 +96,13 @@ the legacy database holds and the specification's tables have nowhere to put.
 The visibility flags are the ones that forced it: without them the directory
 overrides a preference a thousand members already expressed.
 `docs/decisions/0013` is the reasoning. Still thirteen tables.
+
+**One trigger became two, on `door_events`.** Section 3.3 attaches the same
+append-only trigger to both tables. It cannot be the same one: `audit_log` is
+kept forever and `door_events` is kept two years, so the specification's own
+retention in section 6.4 is a delete that its own trigger refuses. The window
+now lives in the trigger, which is the authority on what may go, and the nightly
+job can run.
 
 Two smaller ones: the database password is an environment variable rather than a
 compose secret, because a compose secret outside swarm is a bind-mounted file on
@@ -210,6 +226,12 @@ These block deployment, not development. None is technical.
 - **An admin can flip another member's visibility preferences**, because
   `ADMIN_FIELDS` is the member's own list plus the privileged ones. It is a
   preference that belongs to the member and nothing stops an admin setting it.
+- **`scripts/restore.sh` leaves the scratch database behind on purpose**, so a
+  staging API can be pointed at it, and nothing removes it afterwards.
+- **A door event older than two years cannot be removed one row at a time by
+  anything except a delete that names the window.** That is the point, and it
+  also means a mistake in the retention is a loud error rather than a quiet
+  over-delete.
 - **The mass clear guard is a fixed number, five.** It covers a card list that
   came back short. A lab with more than five cards revoked in one sitting will
   meet it, and the fault event says exactly what was withheld and why.
@@ -229,189 +251,112 @@ These block deployment, not development. None is technical.
   two status strings match the legacy derivation. Comparing against the running
   system on a test hostname is still to do, and it is the step before DNS moves.
 
-## 6. The audits, and what they changed
+## 6. The audits, and what they taught
 
-Three adversarial reads of the whole branch on 2026-09-11, after it was first
-written. Thirty six defects between them, each proved with a probe or a failing
-test before it was fixed. The tests are still there.
+Four adversarial passes over the whole branch, on 2026-09-11 and 2026-09-12,
+after it was first written. Thirty nine defects, each proved with a probe or a
+failing test before it was fixed, and each fix covered by a test where a test
+can reach it.
 
-### The first pass, eleven
+The four commits after the first carry the blow by blow. What is worth reading
+here is what kept coming back, because the next pass should start by looking for
+more of the same.
 
-**The rear door refusal could be stepped over.** `POST /api/door/command` with
-`{"action":"unlock"}` and no door named reached the controller as "unlock
-everything", which includes the rear door, and the refusal only matched on the
-door name. It is now an audited 409 that says so.
+### What each pass looked for
 
-**One bad card id froze the card table for everybody.** The API stores a card id
-as text with no format rule, on purpose. The adapter turned one that is not hex
-into a thrown exception out of `uploadCards`, which took the whole pass with it
-on every tick, forever. It is now a fault against that one card.
+| Pass | Read for | Found |
+| --- | --- | --- |
+| 1 | Correctness against the specification | 11 |
+| 2 | Failure, load, and clocks | 9 |
+| 3 | Line by line, every file, nothing assumed | 16 |
+| 4 | Running the things that had only been written | 3 |
 
-**Card reads were lost whenever the API was unreachable.** The controller's log
-is a ring that has to be read and then emptied, so events were already off the
-board by the time the post failed. They are held in memory now and go up on the
-next tick that works. Enrolment is the thing that depends on them.
+### The patterns
 
-**There was no way to read the audit log.** The whole argument for one admin
-acting immediately is that the log makes it visible afterwards. `GET /api/audit`
-existed in the previous attempt and was not carried across.
+**A wrong request answering as a broken system.** Three separate shapes of it. A
+path segment that is not a uuid reached a uuid column and Postgres refused it
+with an error, so a mistyped URL answered 503. A duplicate on a unique index did
+the same. A stored hash that would not decode did the same, because Argon2
+throws where bcrypt returns false. 503 is the status this API keeps for meaning
+the database is down, and spending it on a typo both misleads the caller and
+buries the signal. Every one of these is now a 404 or a 409.
 
-**Revoking something that was not there wrote an audit row anyway.** Three
-routes did it. The log now records what happened rather than what was asked.
+**A value that is not a number failing open rather than closed.** Twice.
+`Number('soon')` is NaN and every comparison against NaN is false, so a stale
+threshold nobody typed correctly meant the door never reported a stale reading.
+`setInterval(fn, NaN)` runs every millisecond, so a tick interval nobody typed
+correctly turned the poll loop into a flood. Both stop the process now, and
+every setting that should be a whole number goes through one check.
 
-**Deleting a member who had ever acted answered 503.** The refusal only looked
-at rows about that member, not rows naming them, so a former admin met a foreign
-key instead of a sentence. It answers 409 and says to suspend instead.
+**A guard that only matched the shape it was written for.** The 2018 refusal
+matched `unlock` on the rear door and not an unlock with no door named, which
+reaches the controller as "unlock everything". The member delete refusal looked
+at rows about a member and not rows naming them, so a former admin met a foreign
+key instead of a sentence. The adapter fell through to door one for a name it
+did not know. Each was a rule that was right about the case somebody had in mind
+and silent about the neighbouring one.
 
-**The directory showed every address to every oriented member.** The legacy
-system carried `email_visible` and `phone_visible` and members set them. The
-specification's table has neither, so the rewrite would have overridden a
-preference a thousand people had already expressed. See `docs/decisions/0013`.
+**Something written and never run.** The fourth pass is entirely this. The two
+year retention on `door_events` could not run at all, because the append-only
+trigger refused the delete: the table would have grown forever and three
+readings of the code had not noticed. `scripts/backup.sh` joined `$PWD` to a
+`BACKUP_DIR` that was already absolute and wrote the archive into the
+repository. Both were found by typing the command, not by reading. The CI
+workflow, the nightly job and the restore were in the same state and turned out
+to be sound. Running them is cheap and reading them is not enough.
 
-**The directory stopped at 500 members.** The lab has 1,061. It silently hid the
-rest.
+**A poison message retried forever.** One event the API could not write failed
+the whole batch, and the door service holds a refused batch and offers it again
+every five seconds. Every card read after it would have been stuck behind one
+bad row.
 
-**Six columns of member data had nowhere to land**, including the waiver date
-for the roughly 700 members who signed without a contract row, who would have
-imported looking as though they had never signed anything.
+**Data the specification's schema had nowhere to put.** Six columns, including
+the waiver date for the roughly seven hundred members who signed without a
+contract row. The trim in the specification is deliberate and mostly right, and
+it is worth checking every dropped column against the legacy table rather than
+trusting that.
 
-**Changing an email to one somebody else holds answered 503.** Now 409.
+### What was proved not to be a defect
 
-**The API published port 3000 on every interface**, which is a way past Caddy's
-TLS and headers on the public host. It is bound to the loopback now, and Caddy
-sits behind a `public` profile so a laptop does not start it.
+Each of these was about to be changed on a wrong belief. They are recorded so
+nobody spends the time again.
 
-Seven routes had no test beyond the anonymous refusal. They have one now.
+- **Caddy replaces a client's `X-Forwarded-For` rather than appending to it**,
+  measured with a real Caddy in front of a real backend. Taking the first entry
+  is the true client address behind this Caddyfile, so the per-IP rate limit
+  cannot be stepped over by sending the header. True only while no proxy is
+  trusted, which is the configuration here.
+- **bcryptjs answers false for a malformed hash** rather than throwing. Only the
+  Argon2 branch needed a guard.
+- **`sql.begin` hands back a transaction's rows in order**, without unwrapping
+  them, which is what `change()` relies on.
+- **Node's test runner reads `.ts` directly** on 24.20, and `make typecheck`
+  catches what the suite cannot: type stripping does not type check, and a
+  green suite on this stack is not a typecheck.
 
-### The second pass, nine
+### What has not been audited
 
-The first pass read for correctness. This one read for the things that only go
-wrong under load, under failure, or under a clock nobody checked.
+The honest list, and the best place for a fifth pass to start.
 
-**A card id did not survive the round trip.** The adapter reported door events
-using the eight character form the device stores, and the API matches
-`credentials.token` exactly. A card issued by hand as five hex characters worked
-on the door and never appeared on its holder's door log. The adapter maps it
-back now, which is what section 6.3 of the specification means by "arrives as a
-card id".
-
-**Commands could run backwards.** `returning` makes no promise about row order,
-so a lock and an unlock claimed in one pass could reach the controller in either
-order. A door left locked when somebody asked for it to be open is the whole
-difference between a member getting in and not.
-
-**Freshness trusted the lab host's clock.** `door_state.reported_at` was
-whatever the door service sent. A host whose clock is a day out made the door
-read as permanently stale, or permanently fresh. The API stamps it now, because
-staleness is how long since this side heard from a controller.
-
-**Renaming a door made the controller stale forever.** The row for the old name
-stayed with its old timestamp, and the freshness reading takes the oldest. A
-state report is now the whole truth about its controller.
-
-**One bad placement lost the whole batch.** An id that is no longer a credential
-hit a foreign key and rolled back the placements for every other card in the
-pass. Unknown ids are skipped.
-
-**Guessing at a service token could take the API down.** Verifying an Argon2
-hash costs 19 MiB and tens of milliseconds by design, the token id is a
-guessable name rather than a secret, and nothing under `/door` carries a session
-to rate limit. Failures are counted now, and a door service polling every five
-seconds never meets the count.
-
-**A reset for an address that exists took measurably longer**, because the
-request waited for the mail server, and an SMTP server that was down turned it
-into a 503 for members who exist and a 204 for everybody else. The send is not
-awaited and cannot reject.
-
-**An admin could lock everybody out of admin.** Taking your own role away or
-suspending yourself is refused, because there is no guarantee a second admin
-exists and every route that could put it back needs one.
-
-**Two requests racing on a unique index answered 503.** The pre-checks cannot
-see a row that has not committed. A duplicate is a 409 now, centrally, so a
-route added next year gets it too.
-
-Also proved rather than assumed this round: the CI workflow runs end to end from
-a clean checkout with `npm ci` and a schema built from nothing, the import reads
-the legacy database in one snapshot rather than one per query, and the list of
-log events in `docs/operations.md` matches what the code emits.
-
-### The third pass, sixteen
-
-A line by line read of every file, with each finding proved by running it rather
-than by reasoning about it.
-
-**A mistyped URL read as the database being down.** Five routes and two request
-bodies passed a path segment straight into a `uuid` column, and Postgres refuses
-a value it cannot parse with an error rather than an empty result. So
-`/api/credentials/oops` answered 503, which is the status this API keeps for
-"something it needed did not answer", and it landed in the log as
-`request_failed`. Every id now goes through one check and answers 404.
-
-**A stored hash that would not decode answered 503.** Argon2 throws where bcrypt
-returns false, measured both ways. One truncated or hand-edited row would have
-answered 503 to every sign in that member tried, and to every poll a service
-token made, for as long as the row stood.
-
-**Postgres was published on every interface.** The second pass bound the API to
-the loopback and left the database beside it wide open: every password hash,
-every door event and the audit log, reachable from outside the host. Verified
-with `docker compose ps` before and after.
-
-**A tick interval that was not a number would have flooded the board.**
-`setInterval(fn, NaN)` runs every millisecond, measured on node 24.20, against a
-single threaded board from 2013 and against the API.
-
-**A stale threshold that was not a number meant nothing was ever stale.**
-`Number('soon')` is NaN and every comparison against NaN is false, so the door
-would have reported a reading it never took, which is the one thing section 4.7
-of the specification says must not happen.
-
-**A door name the adapter did not know opened door one.** `DOOR_ORDER` on the
-lab host and `DOORS` on the API are separate settings that can disagree, and the
-adapter fell through rather than refusing. Getting this wrong opens the wrong
-door, and it did it quietly.
-
-**One malformed event blocked every card read behind it.** A time that is not a
-time failed the insert, the whole batch was answered with 503, and the door
-service holds a refused batch and offers it again every five seconds forever.
-The API now skips what it cannot write and says how many, and the door service
-drops a batch the API refuses outright rather than offering it for ever.
-
-**A signing key that would not parse passed startup** and then answered 503 to
-every token and every JWKS read for the life of the process, because the
-rejected promise is what got cached. The keys are read at startup now, which
-also proved the escaped-newline path compose uses had never been exercised.
-
-**The rate limit counter could grow without bound.** A caller already over its
-limit still minted a key per request by sending a new address each time. The
-address is only counted while the IP is inside its own limit, and the map has a
-ceiling.
-
-Smaller: a health port already in use crashed the door service outright; a pass
-that failed part way through cleared the faults explaining why; signup had no
-upper bound on a password while reset capped at 200; the token response carried
-its own copy of the one hour lifetime; `service_tokens.last_seen` was written on
-every poll, seventeen thousand times a day, for a value nobody reads to the
-second; `DOORS=` meant one door with no name; and a legacy payment with no
-amount imported silently as 0.00 rather than as a warning.
-
-### Three things this pass proved were not defects
-
-Worth recording, because each was about to be changed on a wrong belief.
-
-**Caddy replaces a client's `X-Forwarded-For` rather than appending to it**,
-measured with a real Caddy in front of a real backend. So taking the first entry
-is the true client address behind this Caddyfile, and the per-IP rate limit
-cannot be stepped over by sending the header. Only true while no proxy is
-trusted, which is the configuration in this repository.
-
-**bcryptjs answers false for a malformed hash** rather than throwing, so the
-legacy branch needed no guard even though the Argon2 branch did.
-
-**`sql.begin` hands back the rows a transaction returned, in order**, without
-unwrapping them, which is what `change()` has been relying on.
+- **Nothing has ever spoken to the real controller.** Section 3.
+- **The import has never run against the real dump**, only against the invented
+  fixture in `scripts/legacy-fixture.sql`.
+- **Two controllers have never run side by side.** Section 5.7 of the
+  specification is the case the whole placement design exists to pass, and it
+  has never been exercised, even though two simulators and two controller ids
+  would do it on a laptop.
+- **Nothing has run for longer than a few minutes.** No soak, no evidence about
+  leaks, connection churn or table bloat over time.
+- **No load or concurrency work** beyond one test of two requests racing on a
+  unique index.
+- **Timing side channels were reasoned about on the sign in path and never
+  measured**, on any path.
+- **`/space_api.json` has never been compared byte for byte with production.**
+- **The Caddyfile headers have not been checked against a current baseline**,
+  and the base images are pinned by tag rather than by digest, and unscanned.
+- **No screen exists**, so nothing has exercised the cookie across subdomains,
+  a reset link in a real mail client, or any of the flows end to end as a
+  person.
 
 ## 7. Open licence questions
 
@@ -433,6 +378,24 @@ in three files.
 
 Then `CONTRIBUTING.md` before changing anything, and `docs/decisions/` when
 something looks like it was done the hard way.
+
+To get it running:
+
+```sh
+make install && make secrets   # then put a password in PG_PASS and DATABASE_URL
+make up && make migrate && make seed
+make check
+```
+
+Node 24 or newer, because the TypeScript runs without a build step and older
+versions will not load it. The suites need the Postgres that `make up` starts.
+`make typecheck` is not optional: stripping types is not checking them, so a
+green suite on this stack says nothing about the types.
+
+Four passes have been over this code and section 6 says what they covered. The
+bar for a new finding is not that it looks wrong, it is that you ran it and it
+was. Three things in section 6 were about to be changed on a wrong belief and
+only a probe caught it.
 
 The two things that must not break are in section 13 of `CONTRIBUTING.md`. A
 verified restorable backup, and the door keeping working when everything here is

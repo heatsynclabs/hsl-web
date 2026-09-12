@@ -13,13 +13,17 @@ set -eu
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 out=${BACKUP_DIR:-backups}
 mkdir -p "$out"
+# Resolved, because the docker mount below needs an absolute path and joining
+# $PWD to an already absolute BACKUP_DIR writes the archive somewhere nobody
+# asked for, inside this repository.
+here=$(cd "$out" && pwd)
 
 docker compose exec -T db pg_dump -U hsl -Fc hsl > "$out/hsl-$stamp.dump"
 echo "wrote $out/hsl-$stamp.dump"
 
 # Caddy's volume holds the TLS certificate and the ACME account key. Losing it
 # costs a new certificate rather than data, and it is cheap to keep.
-docker run --rm -v hsl-web_caddy:/data -v "$PWD/$out":/out alpine \
+docker run --rm -v hsl-web_caddy:/data -v "$here":/out alpine \
   tar czf "/out/caddy-$stamp.tar.gz" -C /data . 2>/dev/null || true
 
 find "$out" -name 'hsl-*.dump' -mtime +30 -delete

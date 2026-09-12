@@ -19,7 +19,10 @@ if (url === undefined || url === '') {
 }
 
 const directory = new URL('../migrations/', import.meta.url)
-const sql = postgres(url)
+// `create table if not exists` below raises a notice every run after the
+// first, and postgres.js prints one as a raw object, which on a deploy reads as
+// something having gone wrong.
+const sql = postgres(url, { onnotice: () => undefined })
 
 await sql`
   create table if not exists schema_migrations (
