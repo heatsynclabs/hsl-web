@@ -11,12 +11,24 @@ This is not urgent. Work through it in order.
 
 ```sh
 docker compose -f compose.lab.yml logs --tail 20 door
-curl -s localhost:9000
+docker compose -f compose.lab.yml exec door wget -qO- http://127.0.0.1:9000
 ```
+
+The health port is bound to localhost inside the container and `compose.lab.yml`
+publishes nothing, because this service accepts no inbound connection. So the
+second line runs in the container. `curl` is not in the image and `wget` is, and
+it is the address rather than the name because `localhost` resolves to IPv6
+first in there and the health server is on IPv4.
 
 The health check answers the last error as a sentence. The error messages in
 this service say what happened, what the system did and what to do next, so read
 it before doing anything else.
+
+`running` is whether a pass is going on right now. `running` true with a
+`lastTickAt` from several minutes ago is a board that is answering slowly rather
+than one that is not answering: a pass writes every card one request at a time
+and nothing cuts it short, so a full card table against a slow board takes as
+long as it takes. Wait for one more pass before doing anything from here.
 
 ## 2. Is it the link to the API, or the link to the controller
 

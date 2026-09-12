@@ -134,8 +134,19 @@ is up and cannot reach the database should stay in the load balancer and answer
 missing container. `app.onError` turns a failed query into a 503 with a sentence
 rather than a stack trace.
 
-The door service answers the same thing on `HEALTH_PORT`, bound to localhost,
-and reports 503 with the last error when its last pass failed.
+The door service answers the same thing on `HEALTH_PORT`, and reports 503 with
+the last error when its last pass failed. It binds to localhost inside its own
+container and `compose.lab.yml` publishes no port, because this service accepts
+no inbound connection, so reading it means going in after it:
+
+```sh
+docker compose -f compose.lab.yml exec door wget -qO- http://127.0.0.1:9000
+```
+
+`running` in that answer is whether a pass is in flight. True, with a
+`lastTickAt` from several minutes ago, is a slow board rather than a stuck
+service: a pass writes every card one request at a time and nothing cuts a pass
+short.
 
 ## What breaks and what happens
 

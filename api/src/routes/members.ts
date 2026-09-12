@@ -5,7 +5,7 @@ import type { Handler } from 'hono'
 import { change } from '../audit.ts'
 import { byEmail, hashPassword, overRateLimit, tooWeak, type Env, type Member } from '../auth.ts'
 import { sql } from '../db.ts'
-import { TEXT_LIMIT, bad, body, missing, param, text, uuid } from '../http.ts'
+import { TEXT_LIMIT, bad, body, missing, param, storable, text, uuid } from '../http.ts'
 import { log } from '../log.ts'
 import { sendResetLink } from '../mail.ts'
 
@@ -362,6 +362,11 @@ function readPatch(
   for (const field of allowed) {
     const value = form[field]
     if (value === undefined) continue
+    // Before the per field checks, because every branch below either stores
+    // this string or hands it to one that does.
+    if (typeof value === 'string' && !storable(value)) {
+      return new Error(`${field} has a character this system cannot store.`)
+    }
 
     if (field === 'roles') {
       if (!Array.isArray(value) || value.some((r) => !ROLES.includes(String(r)))) {

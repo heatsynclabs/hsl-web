@@ -3,7 +3,7 @@
 What exists, what is not done, what nobody has confirmed, and who has to decide.
 Adding to this file is not an admission. It is the point.
 
-Last updated 2026-09-12, after the five passes in section 6.
+Last updated 2026-09-12, after the six passes in section 6.
 
 ## 1. State
 
@@ -19,7 +19,7 @@ the fifth pass from 2026-09-12.
 
 - `make typecheck`: clean for both services.
 - `make voice`: clean.
-- The API suite, 85 tests, against a real Postgres with the schema built from
+- The API suite, 89 tests, against a real Postgres with the schema built from
   nothing by `scripts/migrate.ts`.
 - The door suite, 39 tests, including the whole codec over a real socket.
 - The CI workflow, step for step, from a clean checkout: three `npm ci`
@@ -67,6 +67,18 @@ The fifth pass ran these for the first time.
 - **Every base image pinned by digest**, and the pinned references built and ran:
   the API image from the pinned `node`, and `docker create` on the pinned
   `postgres` and `caddy`, which is the form CI and compose both use.
+
+The sixth pass ran these for the first time.
+
+- **The directory at the size the lab actually is.** A thousand members, every
+  free text field full, read as a member reads it. Numbers in section 6.
+- **The loop in front of a slow board**, which is what the real one is. A first
+  pass writing two hundred cards, timed at 50 ms and at 200 ms a request.
+- **The health endpoint, from where the runbook says to read it.** That is how
+  the fourth defect below was found: it cannot be read from there.
+- **The import against a fixture carrying the rows nobody had planted**, a
+  payment with no date and a grant naming a certification that is not there,
+  then applied and counted against what the report promised.
 
 ### What has not been run
 
@@ -250,6 +262,20 @@ These block deployment, not development. None is technical.
   lets a service which died mid-command pick the command back up. The case is a
   deploy where the old container outlives the new one, or two lab hosts pointed
   at one controller id, and the commands themselves are all safe to run twice.
+- **An optional text field that cannot be stored is dropped rather than
+  refused.** A label or a note carrying U+0000 now makes `text` answer null, and
+  a route that treats the field as optional writes null and answers 201. That is
+  the same thing an over-long label has always done, so it is consistent rather
+  than new, and it is worth knowing that the value went missing quietly. The
+  required fields refuse with a 400.
+- **The directory is a 4.1 MB answer at a thousand members** with every free text
+  field full, and twenty concurrent reads cost about 90 MB of the API
+  container's 512 MB. Section 6 has the measurements. Nothing is wrong; it means
+  this route is not one to poll, and there is no front end yet to poll it.
+- **The base images are pinned and still unscanned.** `docker scout cves` against
+  the pinned digest is the command, and it wants a Docker Hub login this session
+  did not have. Now that the digests are pinned, a scan is at least reproducible
+  and says something about a known artifact.
 - **Nothing retires a controller.** `door_state` rows are written by the
   controller and removed only when that same controller stops naming a door, so
   a board that is unplugged sits there forever with a frozen `reported_at`.
@@ -309,8 +335,8 @@ These block deployment, not development. None is technical.
 
 ## 6. The audits, and what they taught
 
-Five adversarial passes over the whole branch, on 2026-09-11 and 2026-09-12,
-after it was first written. Forty three defects, each proved with a probe or a
+Six adversarial passes over the whole branch, on 2026-09-11 and 2026-09-12,
+after it was first written. Forty eight defects, each proved with a probe or a
 failing test before it was fixed, and each fix covered by a test where a test
 can reach it.
 
@@ -327,6 +353,7 @@ of the same.
 | 3 | Line by line, every file, nothing assumed | 16 |
 | 4 | Running the things that had only been written | 3 |
 | 5 | Two controllers, a soak, concurrency, and measuring | 4 |
+| 6 | Load at lab size, a slow board, and the import script | 5 |
 
 ### The patterns
 
@@ -387,6 +414,48 @@ The same pattern as pass one, three shapes on, and it took running two
 controllers to reach it. With two reporting, a command that does not name one
 answered 503, and so did a command naming a controller that does not exist, with
 the text "No controller has reported to this API" while two were reporting.
+
+**And two more shapes of it in the sixth pass, which is seven in all.** A
+`?before=` cursor past `Number.MAX_SAFE_INTEGER` stopped being the number that
+was typed: the largest bigint arrives as 9223372036854776000, Postgres refuses
+it, and paging too far on any of the three paginated routes read as the database
+being down. The bigint maximum itself failed, so the shape was not exotic. And a
+body carrying U+0000 in any text field answered 503 on every route that stores
+one, because a Postgres text column cannot hold that byte and postgres.js hands
+it straight through. Seven shapes of one pattern over six passes is the argument
+for reading the whole class rather than the instance: the question is not "is
+this input rejected" but "does every value the caller controls reach the database
+as something the database can take".
+
+**Two writes that had to be one.** Rule Four of the README is that a privileged
+change and its audit row go in the same transaction, not beside it, and `change`
+makes that impossible to forget for `audit_log`. `door_events` was left outside
+it. `POST /door/commands/:id/result` updated the command and then inserted the
+event as two statements, so a detail the database refused left the command
+resolved with nothing recording it, and answered 503 saying "Nothing was
+changed" when the command row had been. The expiry path in the same file had the
+same shape. Both are one transaction now. The rule was right and the reach of the
+thing that enforces it was too short.
+
+**A runbook step that cannot be run.** `docs/runbooks/the-door-service-will-not-
+talk-to-the-controller.md` opens with `curl -s localhost:9000`, and that cannot
+work on the lab host: the health server binds to localhost inside the container
+and `compose.lab.yml` publishes no port, because this service accepts nothing
+inbound. The line above it correctly reaches into the container for the logs.
+Running it turned up a second layer as well, that `localhost` inside the image
+resolves to IPv6 first while the health server is on IPv4, so even the corrected
+command needed the address rather than the name. Step one of the 2am runbook,
+for the failure the runbook is named after.
+
+**A report that counted intentions rather than rows.** `scripts/import.ts` has
+always skipped a row it could not place, and the report counted the legacy table.
+Against a fixture with a payment carrying no date and a grant naming a
+certification that is not there, it printed `payments: 5` and wrote three, and
+said nothing at all about two of the four rows it dropped. Money and tool access,
+in the script that runs once, against the database nobody has seen, whose whole
+job is to report rather than guess. The counts are what will be written now,
+every dropped row is named with its reason, and both come from the same
+predicates the write walks.
 
 **Something that only grows.** Two of them, and only a soak reaches either. The
 simulator remembered every query it had ever answered, measured at about 105
@@ -453,6 +522,39 @@ minute of load, so nothing writes a row per poll. That last one is the property
 the schema was shaped around: the legacy system wrote a status snapshot on every
 poll and reached 2.8 million of them.
 
+### What the sixth pass measured
+
+**The directory at the size the lab actually is.** A thousand members, every one
+carrying a full 2,000 characters of current skills and desired skills, which is
+the worst case rather than the usual one. One read is 4.1 MB and takes 0.15
+seconds. Twenty at once cost the API container about 90 MB on top of its resting
+125 MB, against the 512 MB it is limited to, and they serialise: the first
+answers in 0.49 seconds and the twentieth in 2.67. Three more waves of twenty
+settled at 218 MB and did not climb further.
+
+That is the price of the choice in `directory`, which answers with everybody
+rather than a page, because a cap below the size of the membership hides people
+from each other without saying so. The choice stands and the number is now
+written down. What it rules out is polling this route from a screen.
+
+**`?q=` cannot be made expensive.** The pattern goes into an `ilike` with `%` and
+`_` unescaped, which is a known gap below, so the obvious next question is
+whether a pattern can be made to cost something. It cannot: `name` and `email`
+are short, so the worst pattern measured 115 ms through the API and a sixty
+repeat `_%` pattern straight at Postgres took 4 ms. It is a correctness wart,
+not a way to take the API down.
+
+**A slow board blocks the loop for as long as it takes.** A first pass writing
+two hundred cards is 203 requests and nothing bounds a pass as a whole, only each
+request at 15 seconds. At 50 ms a request that pass is 10.4 seconds; at 200 ms it
+is 41 seconds, during which the five second tick is skipped eight times and no
+command is claimed. A command expires after 120 seconds, so the arithmetic that
+matters is 120 divided by the number of cards: at 200 cards a pass slower than
+about 590 ms a request expires commands before it claims them. The lab holds 64
+cards, so the real figure is about 1.8 seconds a request, and the board would
+have to be far slower than anybody has seen. Worth keeping in mind when the card
+table grows.
+
 ### What was proved not to be a defect
 
 Each of these was about to be changed on a wrong belief. They are recorded so
@@ -485,6 +587,15 @@ nobody spends the time again.
 - **Commands are routed per controller correctly.** Two controllers, two
   simulated boards: each ran only what was queued for it, and a stale controller
   refusing a command does not stop the other one taking one.
+- **The import does not need to tolerate a null email or a null timestamp.**
+  This was about to be changed. `LegacyUser` types `email`, `createdAt` and
+  `updatedAt` as non-null where nearly every other field is nullable, and
+  `user.email.trim()` would throw on a null before the preflight printed
+  anything. But `db/schema.rb` declares those columns `null: false`, which is
+  what `scripts/legacy-fixture.sql` mirrors, and the rule in `CONTRIBUTING.md`
+  is narrower than it first reads: it says the legacy database has no foreign
+  keys, so any `*_id` may dangle. The import handles every one of those. Do not
+  add null guards to columns the legacy schema constrains.
 
 ### What has not been audited
 
@@ -498,20 +609,24 @@ The honest list, and the best place for a sixth pass to start.
 - **No screen exists**, so nothing has exercised the cookie across subdomains,
   a reset link in a real mail client, or any of the flows end to end as a
   person.
-- **No load work.** The fifth pass did concurrency, which is a different thing:
-  it raced the claims and the writes that can race, and never asked what happens
-  at a thousand members signing in. The directory returns every member in one
-  answer by design and nobody has measured that answer at the size the lab
-  actually is.
-- **The images are pinned and still unscanned.** Pinning says the image will not
-  move. It says nothing about what is in it, and no scanner runs anywhere.
-- **Nothing measures the door loop against a slow controller.** The simulator
-  answers instantly. A real 2013 board blocks for six seconds on an arm and one
-  second on a card miss, which is written down in `docs/legacy-system.md` and has
-  never been put in front of the loop to see what a tick does when it overruns.
-- **Nobody has read the two scripts adversarially since pass three.**
-  `scripts/import.ts` is 416 lines, it runs once, and it runs against the thing
-  nobody has seen.
+- **The images are still unscanned.** The sixth pass tried and `docker scout`
+  wanted a login. Pinning says the image will not move; it says nothing about
+  what is in it.
+- **Nothing signs in at a thousand members.** The sixth pass measured the
+  directory at that size and the concurrency of reading it. Nobody has measured
+  the write side, or what a hundred people signing in at once costs when every
+  one of them is an Argon2 verify at 19 MiB.
+- **`scripts/backup.sh` and `scripts/restore.sh` have been run as a round trip
+  and never against anything the size of the real database.** The dump that
+  matters is 2.8 million door log rows in the legacy system.
+- **The other script.** The sixth pass read `scripts/import.ts` adversarially and
+  found the report was counting intentions. `scripts/migrate.ts` has been run and
+  not read the same way, and it is the one that decides what a deploy does to the
+  schema.
+- **Nothing reads the runbooks by running them.** One of the seven opened with a
+  command that cannot work, and that was found by typing it. The other six have
+  not been walked step by step against a running system, and that is now the
+  cheapest place left to find something.
 
 ## 7. Open licence questions
 
@@ -547,12 +662,15 @@ versions will not load it. The suites need the Postgres that `make up` starts.
 `make typecheck` is not optional: stripping types is not checking them, so a
 green suite on this stack says nothing about the types.
 
-Five passes have been over this code and section 6 says what they covered. The
+Six passes have been over this code and section 6 says what they covered. The
 bar for a new finding is not that it looks wrong, it is that you ran it and it
-was. Seven things in section 6 were about to be changed on a wrong belief and
+was. Eight things in section 6 were about to be changed on a wrong belief and
 only a probe caught it. One of the fifth pass's own measurements was wrong the
 first time and the wrong number was the frightening one, which is the argument
 for running it twice.
+
+The sixth pass found four of its five by typing a value nobody had typed and one
+by running a runbook. There is no cleverness in any of it.
 
 The two things that must not break are in section 13 of `CONTRIBUTING.md`. A
 verified restorable backup, and the door keeping working when everything here is

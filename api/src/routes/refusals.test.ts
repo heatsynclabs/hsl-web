@@ -149,3 +149,101 @@ describe('what a wrong request answers', () => {
     assert.equal(start({ DOOR_STALE_SECONDS: '90' }), 'started')
   })
 })
+
+/**
+ * The same rule as above, three shapes on, and each of these survived five
+ * passes because nobody had typed the value that reaches it.
+ */
+describe('the sixth audit, on what a wrong value answers', () => {
+  beforeEach(reset)
+
+  const NUL = String.fromCharCode(0)
+
+  test('a page cursor too big to be an id answers a page, not a broken database', async () => {
+    const admin = await makeMember({ roles: ['admin'] })
+    const cookie = await signIn(app, admin.email)
+
+    // Number('9223372036854775807') is 9223372036854776000, because a cursor
+    // past Number.MAX_SAFE_INTEGER is not the value that was typed any more.
+    // Postgres refuses that for a bigint, so paging too far read as the
+    // database being down. Every one of these means "from the newest".
+    for (const cursor of ['9223372036854775807', '9223372036854775808', '99999999999999999999', '1e30']) {
+      for (const path of ['/api/audit', '/api/door/events', '/api/me/door-events']) {
+        const answer = await call(app, `${path}?before=${cursor}`, { cookie })
+        assert.equal(answer.status, 200, `${path}?before=${cursor} answered ${answer.status}`)
+        const { items } = (await answer.json()) as { items: unknown[] }
+        assert.ok(Array.isArray(items))
+      }
+    }
+  })
+
+  test('a cursor that is an id still pages', async () => {
+    const admin = await makeMember({ roles: ['admin'] })
+    const cookie = await signIn(app, admin.email)
+    await sql`insert into audit_log (actor_id, action) values (${admin.id}, 'probe.one')`
+    await sql`insert into audit_log (actor_id, action) values (${admin.id}, 'probe.two')`
+
+    const [newest] = await sql<Array<{ id: string }>>`select id from audit_log order by id desc limit 1`
+    const answer = await call(app, `/api/audit?before=${newest?.id}`, { cookie })
+    const { items } = (await answer.json()) as { items: Array<{ action: string }> }
+    assert.deepEqual(
+      items.map((row) => row.action),
+      ['probe.one'],
+    )
+  })
+
+  test('a body carrying a character the database cannot store is refused, not a 503', async () => {
+    const admin = await makeMember({ roles: ['admin'] })
+    const cookie = await signIn(app, admin.email)
+
+    // A Postgres text column cannot hold U+0000 and postgres.js hands the value
+    // straight through. It is a value this system cannot store rather than one
+    // it cannot reach.
+    const bodies: Array<[string, string, Record<string, unknown>]> = [
+      ['POST /api/signup', '/api/signup',
+        { name: `a${NUL}b`, email: 'nul@example.invalid', password: 'correct-horse-battery', waiverSigned: true }],
+      ['PATCH /api/me phone', '/api/me', { phone: `555${NUL}1234` }],
+      ['PATCH /api/me skills', '/api/me', { currentSkills: `weld${NUL}ing` }],
+      ['PATCH /api/me name', '/api/me', { name: `Ada${NUL}Example` }],
+    ]
+
+    for (const [label, path, body] of bodies) {
+      const method = path === '/api/signup' ? 'POST' : 'PATCH'
+      const answer = await call(app, path, { method, cookie, body })
+      assert.equal(answer.status, 400, `${label} answered ${answer.status}`)
+    }
+
+    // And nothing was written by the one that creates a row.
+    assert.equal((await sql`select id from members where email = 'nul@example.invalid'`).length, 0)
+  })
+
+  test('a command result and the event recording it land together or not at all', async () => {
+    const bearer = await makeServiceToken()
+    const [queued] = await sql<Array<{ id: string }>>`
+      insert into door_commands (controller_id, action, door)
+      values ('openaccess', 'open', 'front') returning id`
+
+    // The detail is whatever the controller put on the wire, by way of the door
+    // service. This one is a value jsonb cannot hold.
+    const answer = await call(app, `/door/commands/${queued?.id}/result`, {
+      method: 'POST',
+      bearer,
+      controller: 'openaccess',
+      body: { outcome: 'done', detail: { said: `ok${NUL}then` } },
+    })
+
+    const [command] = await sql<Array<{ outcome: string | null }>>`
+      select outcome from door_commands where id = ${queued?.id as string}`
+    const events = await sql`select id from door_events`
+
+    if (answer.status >= 400) {
+      // Then nothing may have moved, because that is what the error says.
+      assert.equal(command?.outcome, null, 'the command was resolved and the caller was told it was not')
+      assert.equal(events.length, 0)
+    } else {
+      // Or the result was taken and the event recording it is there.
+      assert.equal(command?.outcome, 'done')
+      assert.equal(events.length, 1)
+    }
+  })
+})

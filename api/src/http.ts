@@ -9,9 +9,21 @@ export async function body(c: Context): Promise<Record<string, unknown>> {
 /** Longest honest free text field. Anything above it is a mistake or an attack. */
 export const TEXT_LIMIT = 2000
 
+/**
+ * Whether Postgres can hold this text at all.
+ *
+ * A text column and a jsonb value both refuse U+0000, and postgres.js hands the
+ * value straight through, so a body carrying one answered 503 as though the
+ * database were unreachable. It is a value this system cannot store rather than
+ * one it cannot reach, and the difference is the whole of what 503 means here.
+ */
+export function storable(value: string): boolean {
+  return !value.includes('\u0000')
+}
+
 /** A trimmed string, or null for anything that is not one. Unknown fields are ignored. */
 export function text(value: unknown, limit = TEXT_LIMIT): string | null {
-  if (typeof value !== 'string') return null
+  if (typeof value !== 'string' || !storable(value)) return null
   const trimmed = value.trim()
   return trimmed === '' || trimmed.length > limit ? null : trimmed
 }
@@ -49,9 +61,15 @@ const MAX_PAGE = 500
 /** Paginated lists take ?limit and ?before, and answer { items, next }. */
 export function page(c: Context): { limit: number; before: number | null } {
   const limit = Number(c.req.query('limit') ?? DEFAULT_PAGE)
-  const before = Number(c.req.query('before'))
+  const before = Math.trunc(Number(c.req.query('before')))
   return {
     limit: Number.isFinite(limit) ? Math.min(Math.max(Math.trunc(limit), 1), MAX_PAGE) : DEFAULT_PAGE,
-    before: Number.isFinite(before) && before > 0 ? Math.trunc(before) : null,
+    /**
+     * A cursor is an id, and past Number.MAX_SAFE_INTEGER a JavaScript number
+     * is not the value that was typed any more: the largest bigint arrives as
+     * 9223372036854776000, which Postgres refuses. Every cursor that big means
+     * the same thing as no cursor, which is to start from the newest.
+     */
+    before: Number.isSafeInteger(before) && before > 0 ? before : null,
   }
 }

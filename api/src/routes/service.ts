@@ -7,7 +7,7 @@ import { change } from '../audit.ts'
 import { hashPassword, type Env } from '../auth.ts'
 import { config, COMMAND_EXPIRY_SECONDS } from '../config.ts'
 import { sql } from '../db.ts'
-import { bad, body, missing, param, text, uuid } from '../http.ts'
+import { bad, body, missing, param, storable, text, uuid } from '../http.ts'
 import { log } from '../log.ts'
 
 const KINDS = ['entry', 'denied', 'presented', 'alarm', 'fault', 'command']
@@ -31,6 +31,31 @@ const SCOPES = ['door', 'members:read', 'status:read']
 function when(value: unknown): string {
   const given = text(value, 40)
   return given !== null && Number.isFinite(Date.parse(given)) ? given : new Date().toISOString()
+}
+
+/**
+ * The detail, or null where jsonb cannot hold it.
+ *
+ * A detail is whatever the controller put on the wire, arriving by way of the
+ * door service, and jsonb refuses U+0000. Dropping the decoration keeps the
+ * event, where refusing the row loses the record of something that happened and
+ * rolling back would offer the same unstorable value again on every pass from
+ * here on. The same reasoning as `when` above: a value that cannot be stored is
+ * replaced rather than allowed to take the row with it.
+ */
+function storableDetail(value: unknown): postgres.JSONValue | null {
+  if (value === undefined || value === null) return null
+
+  let refused = false
+  JSON.stringify(value, (_key, held: unknown) => {
+    if (typeof held === 'string' && !storable(held)) refused = true
+    return held
+  })
+  if (refused) {
+    log({ evt: 'detail_dropped', reason: 'jsonb cannot hold every character in it' })
+    return null
+  }
+  return value as postgres.JSONValue
 }
 
 function controllerId(c: Context): string | null {
@@ -118,18 +143,23 @@ export const commands: Handler<Env> = async (c) => {
   const controller = controllerId(c)
   if (controller === null) return needsController(c)
 
-  const expired = await sql<Array<{ id: string; action: string; door: string | null }>>`
-    update door_commands set resolved_at = now(), outcome = 'expired'
-    where controller_id = ${controller} and resolved_at is null
-      and requested_at < now() - ${`${COMMAND_EXPIRY_SECONDS} seconds`}::interval
-    returning id, action, door`
+  // Expiring a command and recording that it expired go together, for the same
+  // reason the result below does. An admin reading "expired" is reading the
+  // event, and a command marked expired with no event says nothing happened.
+  await sql.begin(async (tx) => {
+    const expired = await tx<Array<{ id: string; action: string; door: string | null }>>`
+      update door_commands set resolved_at = now(), outcome = 'expired'
+      where controller_id = ${controller} and resolved_at is null
+        and requested_at < now() - ${`${COMMAND_EXPIRY_SECONDS} seconds`}::interval
+      returning id, action, door`
 
-  for (const command of expired) {
-    await sql`
-      insert into door_events (controller_id, kind, door, detail)
-      values (${controller}, 'command', ${command.door},
-              ${sql.json({ command: command.action, outcome: 'expired', id: command.id })})`
-  }
+    for (const command of expired) {
+      await tx`
+        insert into door_events (controller_id, kind, door, detail)
+        values (${controller}, 'command', ${command.door},
+                ${sql.json({ command: command.action, outcome: 'expired', id: command.id })})`
+    }
+  })
 
   // Ordered here rather than in the update, because `returning` makes no
   // promise about the order rows come back in. Two commands run backwards is a
@@ -160,16 +190,23 @@ export const commandResult: Handler<Env> = async (c) => {
   }
   if (id === null) return missing(c, 'An unresolved command with that id')
 
-  const [resolved] = await sql<Array<{ action: string; door: string | null }>>`
-    update door_commands set resolved_at = now(), outcome = ${outcome}
-    where id = ${id} and controller_id = ${controller} and resolved_at is null
-    returning action, door`
-  if (resolved === undefined) return missing(c, 'An unresolved command with that id')
+  // One transaction, because the two used to be separate statements: a detail
+  // the database refused left the command resolved with nothing recording it,
+  // and answered 503 saying nothing had changed when the command row had.
+  const resolved = await sql.begin(async (tx) => {
+    const [command] = await tx<Array<{ action: string; door: string | null }>>`
+      update door_commands set resolved_at = now(), outcome = ${outcome}
+      where id = ${id} and controller_id = ${controller} and resolved_at is null
+      returning action, door`
+    if (command === undefined) return null
 
-  await sql`
-    insert into door_events (controller_id, kind, door, detail)
-    values (${controller}, 'command', ${resolved.door},
-            ${sql.json({ command: resolved.action, outcome, id, detail: (form.detail ?? null) as postgres.JSONValue })})`
+    await tx`
+      insert into door_events (controller_id, kind, door, detail)
+      values (${controller}, 'command', ${command.door},
+              ${sql.json({ command: command.action, outcome, id, detail: storableDetail(form.detail) })})`
+    return command
+  })
+  if (resolved === null) return missing(c, 'An unresolved command with that id')
 
   log({ evt: 'door_command', controller, command: resolved.action, outcome })
   return c.body(null, 204)
@@ -240,6 +277,7 @@ export const events: Handler<Env> = async (c) => {
     }
 
     const token = text(event.token, 64)
+    const detail = storableDetail(event.detail)
     try {
       await sql`
         insert into door_events (controller_id, kind, at, token, member_id, door, detail)
@@ -247,7 +285,7 @@ export const events: Handler<Env> = async (c) => {
           ${controller}, ${kind}, ${when(event.at)}, ${token},
           ${token === null ? null : sql`(select member_id from credentials where token = ${token})`},
           ${text(event.door, 32)},
-          ${event.detail === undefined || event.detail === null ? null : sql.json(event.detail as postgres.JSONValue)}
+          ${detail === null ? null : sql.json(detail)}
         )`
       written += 1
       if (kind === 'fault') log({ evt: 'door_fault', controller, detail: event.detail })

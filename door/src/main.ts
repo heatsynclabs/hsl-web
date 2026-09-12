@@ -135,10 +135,18 @@ async function pass(): Promise<void> {
   }
 }
 
+/**
+ * `running` says whether a pass is in flight right now, which is the difference
+ * between a service that is stuck and one that is idle with an old reading.
+ * A slow board takes as long as it takes: measured at 41 seconds for a first
+ * pass writing two hundred cards at 200 ms a request, and nothing bounds a pass
+ * as a whole. Without this the answer during one is ok, with a lastTickAt from
+ * before it started, and that is the first step of the runbook.
+ */
 const health = createServer((_incoming, response) => {
   response
     .writeHead(lastError === null ? 200 : 503, { 'content-type': 'application/json' })
-    .end(JSON.stringify({ ok: lastError === null, lastTickAt, lastError }))
+    .end(JSON.stringify({ ok: lastError === null, running, lastTickAt, lastError }))
 })
 
 // The loop is the job and this is a convenience, so a port already in use is

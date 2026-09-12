@@ -253,40 +253,100 @@ for (const card of cards) {
   seenToken.set(token, card.id)
 }
 
-const seenPair = new Set<string>()
-for (const held of userCerts) {
-  const pair = `${held.userId}:${held.certificationId}`
-  if (seenPair.has(pair)) warnings.push(`user_certifications ${held.id} repeats a pair already granted`)
-  seenPair.add(pair)
+/**
+ * Two certifications that normalise to one slug would merge into one row, and
+ * every grant of the second would land on the first. Certifications are what
+ * the interlocks ask about, so this is a refusal rather than a warning.
+ */
+const seenSlug = new Map<string, number>()
+for (const cert of certifications) {
+  const slug = certSlug.get(cert.id) as string
+  const first = seenSlug.get(slug)
+  if (first !== undefined) {
+    failures.push(
+      `certifications ${first} and ${cert.id} both normalise to the slug ${slug}, which would ` +
+        'merge two tool certifications into one',
+    )
+  }
+  seenSlug.set(slug, cert.id)
 }
 
+/**
+ * What the write below will actually insert, decided here so the report counts
+ * rows rather than intentions.
+ *
+ * The write has always skipped a row it could not place. The report counted the
+ * legacy table, so anybody comparing row counts afterwards found fewer and no
+ * reason why, and a payment with no date went out without a word.
+ */
+const grants = new Set<string>()
+for (const held of userCerts) {
+  if (held.userId === null || !memberId.has(held.userId)) {
+    warnings.push(`user_certifications ${held.id} belongs to no user that exists, and is left behind`)
+    continue
+  }
+  if (held.certificationId === null || !certSlug.has(held.certificationId)) {
+    warnings.push(
+      `user_certifications ${held.id} names certification ${held.certificationId}, which is not ` +
+        'in certifications, and is left behind',
+    )
+    continue
+  }
+  const pair = `${memberId.get(held.userId) as string}:${certSlug.get(held.certificationId) as string}`
+  if (grants.has(pair)) warnings.push(`user_certifications ${held.id} repeats a pair already granted`)
+  grants.add(pair)
+}
+
+const payable: LegacyPayment[] = []
 for (const payment of payments) {
   if (payment.userId === null || !memberId.has(payment.userId)) {
     warnings.push(`payment ${payment.id} belongs to no user that exists, and is left behind`)
+    continue
+  }
+  if (payment.paidOn === null) {
+    warnings.push(`payment ${payment.id} has no date, and is left behind`)
+    continue
   }
   // legacy payments.amount has no not-null constraint. It lands as 0.00, which
   // is a number nobody entered, so it is said out loud rather than assumed.
   if (payment.amount === null) {
     warnings.push(`payment ${payment.id} has no amount, and imports as 0.00`)
   }
+  payable.push(payment)
 }
+
+const signed: LegacyContract[] = []
 for (const contract of contracts) {
   if (contract.userId === null || !memberId.has(contract.userId)) {
     warnings.push(`contract ${contract.id} belongs to no user that exists, and is left behind`)
+    continue
   }
+  signed.push(contract)
 }
+
+/** A member with a waiver date and no contract row gets a waiver from the date. */
+const contractHolders = new Set(signed.map((contract) => memberId.get(contract.userId as number) as string))
+const waiverDates = users.filter(
+  (user) => user.waiver !== null && !contractHolders.has(memberId.get(user.id) as string),
+).length
 
 // The report ----------------------------------------------------------------------
 
+/** Rows this will write, not rows the legacy database holds. */
 const counted = {
   members: users.length,
   credentials: cards.length,
   certifications: certifications.length,
-  memberCertifications: userCerts.length,
-  payments: payments.length,
-  waivers: contracts.length,
+  memberCertifications: grants.size,
+  payments: payable.length,
+  waivers: signed.length + waiverDates,
   withDoorAccess: doorAccess.size,
   withoutPassword: users.filter((user) => (user.encryptedPassword ?? '').trim() === '').length,
+  leftBehind: {
+    memberCertifications: userCerts.length - grants.size,
+    payments: payments.length - payable.length,
+    waivers: contracts.length - signed.length,
+  },
 }
 
 process.stdout.write(`${JSON.stringify(counted, null, 2)}\n`)
@@ -359,6 +419,8 @@ await target.begin(async (tx) => {
               ${tx.json(placementForLegacyCard(card.id, token, card.permissions ?? 1))})`
   }
 
+  // The preflight decided which of these land and counted them. Walking the
+  // same rows against the same set is what keeps the report honest.
   const granted = new Set<string>()
   for (const held of userCerts) {
     const member = held.userId === null ? undefined : memberId.get(held.userId)
@@ -373,9 +435,8 @@ await target.begin(async (tx) => {
               ${held.createdAt})`
   }
 
-  for (const payment of payments) {
-    const member = payment.userId === null ? undefined : memberId.get(payment.userId)
-    if (member === undefined || payment.paidOn === null) continue
+  for (const payment of payable) {
+    const member = memberId.get(payment.userId as number) as string
     await tx`
       insert into payments (member_id, amount, paid_on, recorded_by, legacy_id)
       values (${member}, ${payment.amount ?? '0'}, ${payment.paidOn},
@@ -384,9 +445,8 @@ await target.begin(async (tx) => {
   }
 
   const hasWaiver = new Set<string>()
-  for (const contract of contracts) {
-    const member = contract.userId === null ? undefined : memberId.get(contract.userId)
-    if (member === undefined) continue
+  for (const contract of signed) {
+    const member = memberId.get(contract.userId as number) as string
     hasWaiver.add(member)
     await tx`
       insert into waivers (member_id, signed_at, document, cosigner, legacy_id)
