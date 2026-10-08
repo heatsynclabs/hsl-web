@@ -26,7 +26,7 @@ catalog:
   pg: 8.23.0
   '@types/pg': 8.15.6
   bcryptjs: 3.0.2
-  nodemailer: 9.1.1
+  nodemailer: 10.0.9
   '@types/nodemailer': 8.0.1
   '@types/node': 22.20.1
   esbuild: 0.28.2
