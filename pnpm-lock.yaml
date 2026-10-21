@@ -55,8 +55,8 @@ catalogs:
       specifier: 10.10.0
       version: 10.10.0
     hono:
-      specifier: 4.13.5
-      version: 4.13.5
+      specifier: 4.13.11
+      version: 4.13.11
     jsdom:
       specifier: 30.0.1
       version: 30.0.1
@@ -324,10 +324,10 @@ importers:
     dependencies:
       '@hono/node-server':
         specifier: 'catalog:'
-        version: 2.1.1(hono@4.13.5)
+        version: 2.1.1(hono@4.13.11)
       '@hono/zod-validator':
         specifier: 'catalog:'
-        version: 0.9.1(hono@4.13.5)(zod@4.5.4)
+        version: 0.9.1(hono@4.13.11)(zod@4.5.4)
       '@hsl/schema':
         specifier: workspace:*
         version: link:../../packages/schema
@@ -342,7 +342,7 @@ importers:
         version: 0.45.2(@types/pg@8.15.6)(kysely@0.29.5)(pg@8.23.0)
       hono:
         specifier: 'catalog:'
-        version: 4.13.5
+        version: 4.13.11
       nodemailer:
         specifier: 'catalog:'
         version: 9.1.1
@@ -379,13 +379,13 @@ importers:
     dependencies:
       '@hono/node-server':
         specifier: 'catalog:'
-        version: 2.1.1(hono@4.13.5)
+        version: 2.1.1(hono@4.13.11)
       '@hsl/schema':
         specifier: workspace:*
         version: link:../../packages/schema
       hono:
         specifier: 'catalog:'
-        version: 4.13.5
+        version: 4.13.11
       zod:
         specifier: 'catalog:'
         version: 4.5.4
@@ -1794,8 +1794,8 @@ packages:
     resolution: {integrity: sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==}
     engines: {node: '>= 0.4'}
 
-  hono@4.13.5:
-    resolution: {integrity: sha512-O6+/eCYRkzzzy0rPWwKLiGBR1nFuUPZynnwjxN1MBA62NNqbT0wQEzQyK2gSO5yDIDB336sXQleAhOHrzlYyKw==}
+  hono@4.13.11:
+    resolution: {integrity: sha512-/SMX/RQNJn7oNmFwH6DtwDqcrzZU2otm1FD6OJe2cWF6cfy/F8hq0XVBv7xW3FTJshRQwuBnXHDq2kNsdZnshg==}
     engines: {node: '>=16.9.0'}
 
   hookable@5.5.3:
@@ -2882,13 +2882,13 @@ snapshots:
     optionalDependencies:
       '@noble/hashes': 2.4.0
 
-  '@hono/node-server@2.1.1(hono@4.13.5)':
+  '@hono/node-server@2.1.1(hono@4.13.11)':
     dependencies:
-      hono: 4.13.5
+      hono: 4.13.11
 
-  '@hono/zod-validator@0.9.1(hono@4.13.5)(zod@4.5.4)':
+  '@hono/zod-validator@0.9.1(hono@4.13.11)(zod@4.5.4)':
     dependencies:
-      hono: 4.13.5
+      hono: 4.13.11
       zod: 4.5.4
 
   '@humanfs/core@0.19.2':
@@ -3697,7 +3697,7 @@ snapshots:
     dependencies:
       function-bind: 1.1.2
 
-  hono@4.13.5: {}
+  hono@4.13.11: {}
 
   hookable@5.5.3: {}
 
